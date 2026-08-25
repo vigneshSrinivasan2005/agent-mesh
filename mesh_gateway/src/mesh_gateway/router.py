@@ -2,16 +2,16 @@ from __future__ import annotations
 
 import json
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
+
 import httpx
 from fastapi import HTTPException
 from rich.console import Console
 
+from mesh_gateway.grpc_client import GrpcMeshManager
 from mesh_gateway.health import HealthTracker
 from mesh_gateway.models import (
     MeshConfig,
     NodeConfig,
-    NodeEngine,
-    NodeState,
 )
 
 console = Console()
@@ -20,13 +20,34 @@ console = Console()
 class MeshRouter:
     """Smart request routing, role classification, model alias translation, and proxying."""
 
-    def __init__(self, config: MeshConfig, health_tracker: HealthTracker):
+    def __init__(
+        self,
+        config: MeshConfig,
+        health_tracker: HealthTracker,
+        grpc_manager: Optional[GrpcMeshManager] = None,
+    ):
         self.config = config
         self.health = health_tracker
+        self.grpc_manager = grpc_manager
         self._http_client = httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=5.0))
 
     async def close(self) -> None:
         await self._http_client.aclose()
+        if self.grpc_manager:
+            await self.grpc_manager.close_all()
+
+    def register_node(self, node: NodeConfig) -> None:
+        """Register a dynamically scaled node with the router."""
+        if not any(n.name == node.name for n in self.config.nodes):
+            self.config.nodes.append(node)
+
+    def unregister_node(self, node_name: str) -> None:
+        """Unregister a scaled node when scaled down."""
+        self.config.nodes = [n for n in self.config.nodes if n.name != node_name]
+
+    def get_nodes_for_role(self, role: str) -> List[NodeConfig]:
+        """Return all configured nodes assigned to a specific role."""
+        return [n for n in self.config.nodes if role in n.roles]
 
     def classify_role(self, path: str, requested_model: str, body: Dict[str, Any]) -> str:
         """Classify incoming request into a mesh role: 'autocomplete', 'reasoning', 'chat', 'edit'."""
@@ -169,8 +190,6 @@ class MeshRouter:
 
         forward_body = dict(body)
         forward_body["model"] = resolved_model
-        forward_body["stream"] = True
-
         target_url = f"{node.base_url.rstrip('/')}{path}"
         req_headers = {"Content-Type": "application/json"}
         if node.api_key:
@@ -180,6 +199,27 @@ class MeshRouter:
         token_count = 0
         success = False
 
+        # 1. Try gRPC streaming if node is connected via gRPC
+        if self.grpc_manager:
+            grpc_client = self.grpc_manager.get_client(node.name)
+            if grpc_client and node.transport != "http":
+                try:
+                    async for chunk in grpc_client.stream_completion(
+                        endpoint=path,
+                        payload=forward_body,
+                        timeout_seconds=int(node.timeout_seconds),
+                    ):
+                        if chunk:
+                            token_count += 1
+                            yield chunk
+                    success = True
+                    return
+                except Exception as e:
+                    console.print(
+                        f"[yellow]gRPC streaming failed for {node.name}, falling back to HTTP:[/yellow] {e}"
+                    )
+
+        # 2. HTTP/SSE streaming fallback
         try:
             req = self._http_client.build_request(
                 "POST",

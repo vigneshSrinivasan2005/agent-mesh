@@ -1,0 +1,81 @@
+syntax = "proto3";
+
+package agent_mesh;
+
+service NodeAgentService {
+  // Ultra-fast ping check with Round-Trip Time
+  rpc Ping (PingRequest) returns (PingResponse);
+
+  // Bidirectional streaming telemetry (hardware stats, GPU VRAM, loaded models, queues)
+  rpc StreamTelemetry (TelemetryRequest) returns (stream TelemetryUpdate);
+
+  // Sub-millisecond token streaming proxy
+  rpc StreamCompletion (CompletionRequestProto) returns (stream CompletionChunkProto);
+
+  // Remote Docker container lifecycle management
+  rpc ControlContainer (ContainerControlRequest) returns (ContainerControlResponse);
+}
+
+message PingRequest {
+  int64 client_timestamp_ms = 1;
+}
+
+message PingResponse {
+  int64 client_timestamp_ms = 1;
+  int64 server_timestamp_ms = 2;
+  string node_name = 3;
+  string engine = 4;
+}
+
+message TelemetryRequest {
+  string gateway_id = 1;
+  int32 interval_ms = 2;
+}
+
+message TelemetryUpdate {
+  string node_name = 1;
+  string state = 2;              // ONLINE, DEGRADED, OFFLINE
+  double rtt_ms = 3;
+  double p50_ms = 4;
+  double p95_ms = 5;
+  int64 total_vram_mb = 6;
+  int64 used_vram_mb = 7;
+  double gpu_utilization_pct = 8;
+  double cpu_utilization_pct = 9;
+  repeated string loaded_models = 10;
+  string pinned_model = 11;
+  bool pinned_model_warm = 12;
+  int32 active_requests = 13;
+  int64 total_requests = 14;
+  int64 tokens_generated = 15;
+  int64 timestamp_ms = 16;
+}
+
+message CompletionRequestProto {
+  string model = 1;
+  string endpoint = 2;           // "/v1/chat/completions" or "/v1/completions"
+  string payload_json = 3;       // JSON payload
+  int32 timeout_seconds = 4;
+}
+
+message CompletionChunkProto {
+  string raw_chunk = 1;          // SSE text chunk ("data: ...\n\n")
+  bool is_final = 2;
+  string error_message = 3;
+}
+
+message ContainerControlRequest {
+  string action = 1;             // "START", "STOP", "STATUS", "PULL"
+  string role = 2;
+  string model = 3;
+  int32 port = 4;
+  bool gpu_enabled = 5;
+  string container_id = 6;
+}
+
+message ContainerControlResponse {
+  bool success = 1;
+  string container_id = 2;
+  int32 port = 3;
+  string message = 4;
+}

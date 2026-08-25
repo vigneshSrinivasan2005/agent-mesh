@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
+
 import yaml
 from rich.console import Console
 
@@ -94,7 +95,10 @@ def export_to_continue_file(config: MeshConfig, target_path: Optional[Path] = No
     # If file exists, create a backup
     if target_path.exists():
         backup_path = target_path.with_suffix(".yaml.bak")
-        with open(target_path, "r", encoding="utf-8") as src, open(backup_path, "w", encoding="utf-8") as dst:
+        with (
+            open(target_path, "r", encoding="utf-8") as src,
+            open(backup_path, "w", encoding="utf-8") as dst,
+        ):
             dst.write(src.read())
         console.print(f"[dim]Backed up existing config to {backup_path}[/dim]")
 

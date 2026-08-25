@@ -7,6 +7,11 @@ mesh:
   health_check_interval_seconds: 5.0
   fallback_enabled: true
   degraded_latency_threshold_ms: 300.0
+  auto_scaling:
+    enabled: true
+    max_replicas_per_role: 3
+    scale_up_queue_threshold: 3
+    idle_cooldown_seconds: 60.0
 
 # Define your physical devices / local nodes here:
 nodes:
@@ -55,3 +60,19 @@ nodes:
       "reasoning-chat": "deepseek-r1:14b"
       "tab-autocomplete": "qwen2.5-coder:1.5b-base"
     timeout_seconds: 180.0
+
+  # Device 4: Docker Containerized Worker (Local or Remote Container)
+  - name: "local-docker-worker"
+    base_url: "http://127.0.0.1:11434"
+    engine: "ollama"
+    roles:
+      - "reasoning"
+      - "chat"
+    priority: 1
+    pinned_model: "qwen2.5-coder:14b"
+    container:
+      enabled: true
+      container_id: "agent-mesh-gpu-worker"
+      host_port: 11434
+      gpu_enabled: true
+

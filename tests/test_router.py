@@ -1,13 +1,11 @@
 import pytest
 from fastapi import HTTPException
-
 from mesh_gateway.health import HealthTracker
 from mesh_gateway.models import (
     MeshConfig,
     MeshSettings,
     NodeConfig,
     NodeEngine,
-    NodeHealthStatus,
     NodeState,
 )
 from mesh_gateway.router import MeshRouter
@@ -57,14 +55,27 @@ def test_classify_role(sample_config):
     router = MeshRouter(sample_config, tracker)
 
     # Autocomplete indicators
-    assert router.classify_role("/v1/completions", "tab-autocomplete", {}) == "autocomplete"
-    assert router.classify_role("/v1/completions", "qwen2.5-coder:1.5b-base", {}) == "autocomplete"
+    assert (
+        router.classify_role("/v1/completions", "tab-autocomplete", {})
+        == "autocomplete"
+    )
+    assert (
+        router.classify_role("/v1/completions", "qwen2.5-coder:1.5b-base", {})
+        == "autocomplete"
+    )
     assert router.classify_role("/v1/completions", "my-fim-model", {}) == "autocomplete"
 
     # Chat / Reasoning indicators
-    assert router.classify_role("/v1/chat/completions", "reasoning-chat", {}) == "reasoning"
-    assert router.classify_role("/v1/chat/completions", "deepseek-r1", {}) == "reasoning"
-    assert router.classify_role("/v1/chat/completions", "qwen2.5-coder:14b", {}) == "chat"
+    assert (
+        router.classify_role("/v1/chat/completions", "reasoning-chat", {})
+        == "reasoning"
+    )
+    assert (
+        router.classify_role("/v1/chat/completions", "deepseek-r1", {}) == "reasoning"
+    )
+    assert (
+        router.classify_role("/v1/chat/completions", "qwen2.5-coder:14b", {}) == "chat"
+    )
     assert router.classify_role("/v1/chat/completions", "fast-edit", {}) == "edit"
 
 
@@ -75,7 +86,10 @@ def test_model_alias_resolution(sample_config):
     node_mac = sample_config.nodes[0]
     node_gpu = sample_config.nodes[1]
 
-    assert router.resolve_model_name(node_mac, "tab-autocomplete") == "qwen2.5-coder:1.5b-base"
+    assert (
+        router.resolve_model_name(node_mac, "tab-autocomplete")
+        == "qwen2.5-coder:1.5b-base"
+    )
     assert router.resolve_model_name(node_gpu, "reasoning-chat") == "qwen2.5-coder:14b"
     assert router.resolve_model_name(node_gpu, "deepseek-r1") == "deepseek-r1:14b"
     assert router.resolve_model_name(node_gpu, "unaliased-model") == "unaliased-model"

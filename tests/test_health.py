@@ -1,7 +1,4 @@
 import pytest
-import pytest_asyncio
-import httpx
-
 from mesh_gateway.health import HealthTracker
 from mesh_gateway.models import (
     MeshConfig,
@@ -15,7 +12,9 @@ from mesh_gateway.models import (
 @pytest.fixture
 def sample_config():
     return MeshConfig(
-        mesh=MeshSettings(health_check_interval_seconds=1.0, degraded_latency_threshold_ms=100.0),
+        mesh=MeshSettings(
+            health_check_interval_seconds=1.0, degraded_latency_threshold_ms=100.0
+        ),
         nodes=[
             NodeConfig(
                 name="test-node-1",

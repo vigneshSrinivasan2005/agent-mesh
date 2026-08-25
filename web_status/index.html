@@ -163,6 +163,29 @@
     .warm-badge.cold { color: var(--text-muted); }
     .model-name { font-family: monospace; color: #fff; font-weight: 600; }
 
+    .type-badge {
+      font-size: 0.7rem;
+      padding: 0.1rem 0.4rem;
+      border-radius: 4px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .type-badge.docker {
+      background: rgba(56, 189, 248, 0.15);
+      color: var(--accent);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+    }
+    .type-badge.scaled {
+      background: rgba(234, 179, 8, 0.15);
+      color: var(--yellow);
+      border: 1px solid rgba(234, 179, 8, 0.3);
+    }
+    .type-badge.native {
+      background: rgba(148, 163, 184, 0.15);
+      color: var(--text-muted);
+      border: 1px solid rgba(148, 163, 184, 0.3);
+    }
+
     .metrics-row {
       display: flex;
       justify-content: space-between;
@@ -250,13 +273,22 @@
           `<span class="role-tag ${r === 'autocomplete' ? 'autocomplete' : ''}">${r}</span>`
         ).join('');
 
+        const isContainer = node.is_container;
+        const isAutoScaled = node.is_auto_scaled;
+        let typeBadgeHtml = '<span class="type-badge native">Native</span>';
+        if (isAutoScaled) {
+          typeBadgeHtml = '<span class="type-badge scaled">Auto-Scaled</span>';
+        } else if (isContainer) {
+          typeBadgeHtml = `<span class="type-badge docker">Docker${node.container_id ? ` (${node.container_id})` : ''}</span>`;
+        }
+
         const latencyColor = node.state === 'OFFLINE' ? 'var(--red)' : (node.latency_ms > 200 ? 'var(--yellow)' : 'var(--green)');
         const latencyText = node.state === 'OFFLINE' ? 'OFFLINE' : `${node.latency_ms} ms`;
 
         card.innerHTML = `
           <div class="node-header">
             <div>
-              <div class="node-title">${node.name}</div>
+              <div class="node-title">${node.name} ${typeBadgeHtml}</div>
               <div class="node-url">${node.base_url}</div>
             </div>
             <span class="priority-badge">Priority ${node.priority}</span>

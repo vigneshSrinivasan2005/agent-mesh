@@ -1,18 +1,19 @@
 from __future__ import annotations
 
-import os
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-from fastapi import FastAPI, HTTPException, Request
+from typing import List, Optional
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 
 from mesh_gateway.config_loader import load_config
+from mesh_gateway.docker_scaler import DockerScaler
+from mesh_gateway.grpc_client import GrpcMeshManager
 from mesh_gateway.health import HealthTracker
 from mesh_gateway.models import (
-    ChatCompletionRequest,
-    CompletionRequest,
     MeshConfig,
     MeshHealthSummary,
     ModelCard,
@@ -26,15 +27,34 @@ def create_app(config: Optional[MeshConfig] = None) -> FastAPI:
     if config is None:
         config = load_config()
 
+    grpc_manager = GrpcMeshManager(default_grpc_port=config.mesh.grpc_port or 50051)
     health_tracker = HealthTracker(config)
-    router = MeshRouter(config, health_tracker)
+    router = MeshRouter(config, health_tracker, grpc_manager=grpc_manager)
+    docker_scaler = DockerScaler(config.mesh.auto_scaling, router, health_tracker)
+
+    def _on_grpc_telemetry(update):
+        if update.node_name in health_tracker.statuses:
+            st = health_tracker.statuses[update.node_name]
+            st.grpc_connected = True
+            st.gpu_vram_used_mb = update.used_vram_mb
+            st.gpu_vram_total_mb = update.total_vram_mb
+            st.gpu_utilization_pct = update.gpu_utilization_pct
+            if update.loaded_models:
+                st.loaded_models = list(update.loaded_models)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        # Startup: start background health prober
+        # Startup: connect to gRPC nodes, start health prober & auto scaler
+        for node in config.nodes:
+            if node.transport != "http":
+                asyncio.create_task(
+                    grpc_manager.register_node(node, telemetry_callback=_on_grpc_telemetry)
+                )
         await health_tracker.start()
+        docker_scaler.start()
         yield
-        # Shutdown: stop prober and clean up connections
+        # Shutdown: stop scaler, prober and clean up connections
+        await docker_scaler.stop()
         await health_tracker.stop()
         await router.close()
 

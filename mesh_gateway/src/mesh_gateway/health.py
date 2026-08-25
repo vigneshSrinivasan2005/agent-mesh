@@ -5,6 +5,7 @@ import datetime
 import statistics
 import time
 from typing import Dict, List, Optional
+
 import httpx
 from rich.console import Console
 
@@ -34,15 +35,38 @@ class HealthTracker:
 
         # Initialize node status models
         for node in config.nodes:
-            self.statuses[node.name] = NodeHealthStatus(
-                name=node.name,
-                base_url=node.base_url,
-                engine=node.engine,
-                roles=node.roles,
-                priority=node.priority,
-                state=NodeState.INITIALIZING,
-                pinned_model=node.pinned_model,
-            )
+            self._init_node_status(node)
+
+    def _init_node_status(self, node: NodeConfig) -> None:
+        is_cont = node.container.enabled if node.container else False
+        cont_id = node.container.container_id if node.container else None
+        is_scaled = node.container.is_auto_scaled if node.container else False
+        self.statuses[node.name] = NodeHealthStatus(
+            name=node.name,
+            base_url=node.base_url,
+            engine=node.engine,
+            roles=node.roles,
+            priority=node.priority,
+            state=NodeState.INITIALIZING,
+            pinned_model=node.pinned_model,
+            is_container=is_cont,
+            container_id=cont_id,
+            container_engine="docker" if is_cont else "native",
+            is_auto_scaled=is_scaled,
+        )
+        self.nodes_by_name[node.name] = node
+
+    def register_node(self, node: NodeConfig) -> None:
+        """Dynamically add a new node (e.g. from auto-scaler) to health monitoring."""
+        if not any(n.name == node.name for n in self.config.nodes):
+            self.config.nodes.append(node)
+        self._init_node_status(node)
+
+    def unregister_node(self, node_name: str) -> None:
+        """Remove a dynamic node from health monitoring."""
+        self.config.nodes = [n for n in self.config.nodes if n.name != node_name]
+        self.statuses.pop(node_name, None)
+        self.nodes_by_name.pop(node_name, None)
 
     async def start(self) -> None:
         if self._running:
@@ -124,7 +148,9 @@ class HealthTracker:
                     status.p50_latency_ms = round(statistics.median(status.latency_history), 2)
                     sorted_latencies = sorted(status.latency_history)
                     p95_idx = int(len(sorted_latencies) * 0.95)
-                    status.p95_latency_ms = round(sorted_latencies[min(p95_idx, len(sorted_latencies) - 1)], 2)
+                    status.p95_latency_ms = round(
+                        sorted_latencies[min(p95_idx, len(sorted_latencies) - 1)], 2
+                    )
 
                 # Check VRAM active loaded models if Ollama
                 loaded_models: List[str] = []
@@ -145,7 +171,7 @@ class HealthTracker:
                 # If pinned model is set, check if it's currently warm in VRAM
                 if node.pinned_model:
                     pinned_warm = any(node.pinned_model in m for m in loaded_models)
-                
+
                 status.loaded_models = loaded_models
                 status.pinned_model_warm = pinned_warm
 
@@ -226,5 +252,7 @@ class HealthTracker:
             candidates.append((node, st))
 
         # Sort: priority ascending (1 before 2), then active requests, then latency
-        candidates.sort(key=lambda item: (item[0].priority, item[1].active_requests, item[1].latency_ms))
+        candidates.sort(
+            key=lambda item: (item[0].priority, item[1].active_requests, item[1].latency_ms)
+        )
         return [c[0] for c in candidates]

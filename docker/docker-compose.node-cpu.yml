@@ -1,0 +1,17 @@
+services:
+  ollama-cpu-node:
+    image: ollama/ollama:latest
+    container_name: agent-mesh-cpu-worker
+    restart: unless-stopped
+    ports:
+      - "${WORKER_PORT:-11434}:11434"
+    volumes:
+      - ollama_cpu_models:/root/.ollama
+    environment:
+      - OLLAMA_KEEP_ALIVE=-1
+      - OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL:-2}
+      - OLLAMA_MAX_LOADED_MODELS=1
+
+volumes:
+  ollama_cpu_models:
+    name: agent_mesh_ollama_cpu_models

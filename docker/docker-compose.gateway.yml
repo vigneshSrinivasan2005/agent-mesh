@@ -1,0 +1,15 @@
+services:
+  agent-mesh-gateway:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.gateway
+    container_name: agent-mesh-gateway
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../mesh-config.yaml:/app/mesh-config.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - MESH_CONFIG=/app/mesh-config.yaml
+    command: ["--config", "/app/mesh-config.yaml"]
