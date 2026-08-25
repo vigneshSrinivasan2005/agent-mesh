@@ -1,0 +1,208 @@
+from __future__ import annotations
+
+import json
+from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
+import httpx
+from fastapi import HTTPException
+from rich.console import Console
+
+from mesh_gateway.health import HealthTracker
+from mesh_gateway.models import (
+    MeshConfig,
+    NodeConfig,
+    NodeEngine,
+    NodeState,
+)
+
+console = Console()
+
+
+class MeshRouter:
+    """Smart request routing, role classification, model alias translation, and proxying."""
+
+    def __init__(self, config: MeshConfig, health_tracker: HealthTracker):
+        self.config = config
+        self.health = health_tracker
+        self._http_client = httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=5.0))
+
+    async def close(self) -> None:
+        await self._http_client.aclose()
+
+    def classify_role(self, path: str, requested_model: str, body: Dict[str, Any]) -> str:
+        """Classify incoming request into a mesh role: 'autocomplete', 'reasoning', 'chat', 'edit'."""
+        model_lower = requested_model.lower()
+
+        # FIM / Tab autocomplete indicators
+        if "autocomplete" in model_lower or "fim" in model_lower or "tab" in model_lower:
+            return "autocomplete"
+        if path.endswith("/completions") and not path.endswith("/chat/completions"):
+            # Standard /v1/completions usually represents FIM or raw completion
+            return "autocomplete"
+
+        # Reasoning / Heavy Agent indicators
+        if "reasoning" in model_lower or "r1" in model_lower or "deepseek" in model_lower:
+            return "reasoning"
+        if "edit" in model_lower:
+            return "edit"
+        if "chat" in model_lower or "coder" in model_lower:
+            return "chat"
+
+        # Default to chat/reasoning for chat completions, autocomplete for plain completions
+        if path.endswith("/chat/completions"):
+            return "chat"
+        return "autocomplete"
+
+    def select_node(self, role: str, requested_model: str) -> Tuple[NodeConfig, str]:
+        """
+        Select best healthy node for the role with automatic failover.
+        Returns (selected_node, resolved_model_name).
+        """
+        # First attempt: find healthy nodes explicitly offering this role
+        healthy_nodes = self.health.get_healthy_nodes(role=role)
+
+        # Fallback 1: if no healthy node for specific role, try related roles
+        if not healthy_nodes and self.config.mesh.fallback_enabled:
+            if role in ["reasoning", "edit"]:
+                healthy_nodes = self.health.get_healthy_nodes(role="chat")
+            elif role == "chat":
+                healthy_nodes = self.health.get_healthy_nodes(role="reasoning")
+
+        # Fallback 2: try any healthy node in the entire mesh
+        if not healthy_nodes and self.config.mesh.fallback_enabled:
+            healthy_nodes = self.health.get_healthy_nodes()
+
+        if not healthy_nodes:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "No healthy nodes available in the mesh to handle this request",
+                    "role_requested": role,
+                    "model_requested": requested_model,
+                    "mesh_summary": self.health.get_summary().model_dump(mode="json"),
+                },
+            )
+
+        selected_node = healthy_nodes[0]
+        resolved_model = self.resolve_model_name(selected_node, requested_model)
+        return selected_node, resolved_model
+
+    def resolve_model_name(self, node: NodeConfig, requested_model: str) -> str:
+        """Translate client model alias to the physical backend model name."""
+        # 1. Check exact alias match in node config
+        if requested_model in node.model_aliases:
+            return node.model_aliases[requested_model]
+
+        # 2. Check lower-case alias
+        req_lower = requested_model.lower()
+        for alias, target in node.model_aliases.items():
+            if alias.lower() == req_lower:
+                return target
+
+        # 3. If generic alias, fallback to pinned model if configured
+        if req_lower in ["tab-autocomplete", "autocomplete", "fim", "mesh-autocomplete"]:
+            if node.pinned_model:
+                return node.pinned_model
+        if req_lower in ["reasoning-chat", "mesh-reasoning", "reasoning", "chat"]:
+            if node.pinned_model:
+                return node.pinned_model
+
+        # 4. Otherwise use requested model name directly
+        return requested_model
+
+    async def forward_request(
+        self,
+        path: str,
+        body: Dict[str, Any],
+        headers: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        """Forward a non-streaming JSON request to the selected node."""
+        requested_model = body.get("model", "")
+        role = self.classify_role(path, requested_model, body)
+        node, resolved_model = self.select_node(role, requested_model)
+
+        # Mutate model in payload
+        forward_body = dict(body)
+        forward_body["model"] = resolved_model
+
+        # Build target URL (Ollama supports /v1/chat/completions and /v1/completions natively)
+        target_url = f"{node.base_url.rstrip('/')}{path}"
+
+        req_headers = {"Content-Type": "application/json"}
+        if node.api_key:
+            req_headers["Authorization"] = f"Bearer {node.api_key}"
+
+        self.health.record_request_start(node.name)
+        try:
+            resp = await self._http_client.post(
+                target_url,
+                json=forward_body,
+                headers=req_headers,
+                timeout=httpx.Timeout(node.timeout_seconds),
+            )
+            if resp.status_code >= 400:
+                self.health.record_request_end(node.name, success=False)
+                raise HTTPException(
+                    status_code=resp.status_code,
+                    detail=f"Node '{node.name}' returned error: {resp.text}",
+                )
+
+            data = resp.json()
+            self.health.record_request_end(node.name, success=True)
+            return data
+        except httpx.RequestError as e:
+            self.health.record_request_end(node.name, success=False)
+            raise HTTPException(
+                status_code=502,
+                detail=f"Failed to communicate with node '{node.name}' at {node.base_url}: {e}",
+            )
+
+    async def forward_stream(
+        self,
+        path: str,
+        body: Dict[str, Any],
+        headers: Optional[Dict[str, str]] = None,
+    ) -> AsyncGenerator[str, None]:
+        """Forward a streaming SSE request directly with zero buffering."""
+        requested_model = body.get("model", "")
+        role = self.classify_role(path, requested_model, body)
+        node, resolved_model = self.select_node(role, requested_model)
+
+        forward_body = dict(body)
+        forward_body["model"] = resolved_model
+        forward_body["stream"] = True
+
+        target_url = f"{node.base_url.rstrip('/')}{path}"
+        req_headers = {"Content-Type": "application/json"}
+        if node.api_key:
+            req_headers["Authorization"] = f"Bearer {node.api_key}"
+
+        self.health.record_request_start(node.name)
+        token_count = 0
+        success = False
+
+        try:
+            req = self._http_client.build_request(
+                "POST",
+                target_url,
+                json=forward_body,
+                headers=req_headers,
+                timeout=httpx.Timeout(node.timeout_seconds),
+            )
+            resp = await self._http_client.send(req, stream=True)
+
+            if resp.status_code >= 400:
+                error_bytes = await resp.aread()
+                self.health.record_request_end(node.name, success=False)
+                yield f"data: {json.dumps({'error': error_bytes.decode('utf-8', errors='replace')})}\n\n"
+                return
+
+            async for chunk in resp.aiter_text():
+                if chunk:
+                    token_count += 1
+                    yield chunk
+
+            success = True
+        except Exception as e:
+            yield f"data: {json.dumps({'error': f'Streaming error from node {node.name}: {e}'})}\n\n"
+        finally:
+            self.health.record_request_end(node.name, success=success, tokens=token_count)

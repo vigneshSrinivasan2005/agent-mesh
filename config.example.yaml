@@ -1,0 +1,57 @@
+# Agent-Mesh Multi-Device Gateway Configuration
+# Connects multiple physical devices into a single AI engine for VS Code / Continue.dev / Cline
+
+mesh:
+  listen_host: "0.0.0.0"
+  listen_port: 8000
+  health_check_interval_seconds: 5.0
+  fallback_enabled: true
+  degraded_latency_threshold_ms: 300.0
+
+# Define your physical devices / local nodes here:
+nodes:
+  # Device 1: Fast Mac / Laptop / Mini-PC dedicated to sub-50ms tab autocomplete
+  - name: "macbook-m-series"
+    base_url: "http://192.168.1.50:11434"
+    engine: "ollama"
+    roles:
+      - "autocomplete"
+    priority: 1
+    pinned_model: "qwen2.5-coder:1.5b-base"
+    model_aliases:
+      "tab-autocomplete": "qwen2.5-coder:1.5b-base"
+      "mesh-autocomplete": "qwen2.5-coder:1.5b-base"
+      "qwen-1.5b": "qwen2.5-coder:1.5b-base"
+    timeout_seconds: 30.0
+
+  # Device 2: High VRAM PC / Dedicated GPU rig for heavy reasoning and coding loops
+  - name: "desktop-rtx-4090"
+    base_url: "http://192.168.1.100:11434"
+    engine: "ollama"
+    roles:
+      - "chat"
+      - "edit"
+      - "reasoning"
+    priority: 1
+    pinned_model: "qwen2.5-coder:14b"
+    model_aliases:
+      "reasoning-chat": "qwen2.5-coder:14b"
+      "mesh-reasoning": "qwen2.5-coder:14b"
+      "deepseek-r1": "deepseek-r1:14b"
+      "fast-edit": "qwen2.5-coder:14b"
+    timeout_seconds: 180.0
+
+  # Device 3: Secondary Worker / Homelab Server (Fallback for heavy reasoning or embeddings)
+  - name: "homelab-server"
+    base_url: "http://192.168.1.150:11434"
+    engine: "ollama"
+    roles:
+      - "chat"
+      - "reasoning"
+      - "autocomplete"
+    priority: 2
+    pinned_model: "deepseek-r1:14b"
+    model_aliases:
+      "reasoning-chat": "deepseek-r1:14b"
+      "tab-autocomplete": "qwen2.5-coder:1.5b-base"
+    timeout_seconds: 180.0
