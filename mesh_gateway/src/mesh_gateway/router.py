@@ -117,25 +117,58 @@ class MeshRouter:
 
     def resolve_model_name(self, node: NodeConfig, requested_model: str) -> str:
         """Translate client model alias to the physical backend model name."""
-        # 1. Check exact alias match in node config
-        if requested_model in node.model_aliases:
-            return node.model_aliases[requested_model]
+        st = self.health.statuses.get(node.name)
+        available = st.available_models if st else []
+        loaded = st.loaded_models if st else []
 
-        # 2. Check lower-case alias
-        req_lower = requested_model.lower()
-        for alias, target in node.model_aliases.items():
-            if alias.lower() == req_lower:
+        # 1. Exact alias match in node config
+        target = node.model_aliases.get(requested_model)
+        if target:
+            if not available or target in available:
                 return target
 
-        # 3. If generic alias, fallback to pinned model if configured
-        if req_lower in ["tab-autocomplete", "autocomplete", "fim", "mesh-autocomplete"]:
-            if node.pinned_model:
-                return node.pinned_model
-        if req_lower in ["reasoning-chat", "mesh-reasoning", "reasoning", "chat"]:
-            if node.pinned_model:
-                return node.pinned_model
+        # 2. Lower-case alias
+        req_lower = requested_model.lower()
+        for alias, tgt in node.model_aliases.items():
+            if alias.lower() == req_lower:
+                if not available or tgt in available:
+                    return tgt
 
-        # 4. Otherwise use requested model name directly
+        # 3. If generic alias, check loaded/pinned/available models
+        if req_lower in [
+            "tab-autocomplete",
+            "autocomplete",
+            "fim",
+            "mesh-autocomplete",
+            "reasoning-chat",
+            "mesh-reasoning",
+            "reasoning",
+            "chat",
+            "deepseek-r1",
+        ]:
+            if loaded:
+                return loaded[0]
+            if node.pinned_model and (not available or node.pinned_model in available):
+                return node.pinned_model
+            if available:
+                return available[0]
+
+        # 4. If requested model is available, use it directly
+        if not available or requested_model in available:
+            return requested_model
+
+        # 5. Fuzzy match by model family (e.g. requested 'deepseek-r1:14b' but node has 'deepseek-r1:8b')
+        prefix = requested_model.split(":")[0].lower()
+        for av in available:
+            if av.lower().startswith(prefix):
+                return av
+
+        # 6. If node only has one model loaded or available, use it
+        if loaded:
+            return loaded[0]
+        if len(available) == 1:
+            return available[0]
+
         return requested_model
 
     async def forward_request(
