@@ -151,20 +151,31 @@ agent-mesh export-continue
 
 #### Generated `~/.continue/config.yaml`:
 ```yaml
+name: Main Config
+version: 1.0.0
+schema: v1
+
 models:
-  - name: "Mesh-Reasoning (Multi-Device)"
-    provider: "openai"
-    model: "reasoning-chat"
-    apiBase: "http://127.0.0.1:8000/v1"
+  - name: "Mesh-Reasoning (DeepSeek-R1)"
+    provider: openai
+    model: reasoning-chat
+    apiBase: http://127.0.0.1:8000/v1
+    apiKey: "EMPTY"
     roles:
       - chat
       - edit
 
-tabAutocompleteModel:
-  title: "Mesh-Autocomplete (Pinned FIM)"
-  provider: "openai"
-  model: "tab-autocomplete"
-  apiBase: "http://127.0.0.1:8000/v1"
+tabAutocompleteModels:
+  - name: "Mesh-Autocomplete (Qwen-1.5B FIM)"
+    provider: openai
+    model: tab-autocomplete
+    apiBase: http://127.0.0.1:8000/v1
+    apiKey: "EMPTY"
+
+prompts:
+  - name: mesh-status
+    description: "Agent-Mesh Status Check"
+    prompt: "Check the health and loaded models across the Agent-Mesh local network."
 ```
 
 ---

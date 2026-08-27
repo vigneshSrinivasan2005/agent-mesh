@@ -13,37 +13,37 @@ console = Console()
 
 
 def generate_continue_yaml(config: MeshConfig) -> str:
-    """Generate Continue.dev YAML configuration (config.yaml)."""
+    """Generate Continue.dev YAML configuration (config.yaml schema v1)."""
     gateway_base = f"http://127.0.0.1:{config.mesh.listen_port}/v1"
 
     data: Dict[str, Any] = {
+        "name": "Main Config",
+        "version": "1.0.0",
+        "schema": "v1",
         "models": [
             {
-                "name": "Mesh-Reasoning (Multi-Device)",
+                "name": "Mesh-Reasoning (DeepSeek-R1)",
                 "provider": "openai",
                 "model": "reasoning-chat",
                 "apiBase": gateway_base,
+                "apiKey": "EMPTY",
                 "roles": ["chat", "edit"],
-            },
-            {
-                "name": "Mesh-Fast-Edit",
-                "provider": "openai",
-                "model": "fast-edit",
-                "apiBase": gateway_base,
-                "roles": ["edit"],
-            },
+            }
         ],
-        "tabAutocompleteModel": {
-            "title": "Mesh-Autocomplete (Pinned FIM)",
-            "provider": "openai",
-            "model": "tab-autocomplete",
-            "apiBase": gateway_base,
-        },
-        "customCommands": [
+        "tabAutocompleteModels": [
+            {
+                "name": "Mesh-Autocomplete (Qwen-1.5B FIM)",
+                "provider": "openai",
+                "model": "tab-autocomplete",
+                "apiBase": gateway_base,
+                "apiKey": "EMPTY",
+            }
+        ],
+        "prompts": [
             {
                 "name": "mesh-status",
-                "prompt": "Check the health and loaded models across the Agent-Mesh local network.",
                 "description": "Agent-Mesh Status Check",
+                "prompt": "Check the health and loaded models across the Agent-Mesh local network.",
             }
         ],
     }
