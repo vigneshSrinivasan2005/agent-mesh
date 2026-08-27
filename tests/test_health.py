@@ -84,3 +84,26 @@ async def test_probe_node_offline():
     assert status.state == NodeState.OFFLINE
     assert status.error_message is not None
     assert not status.pinned_model_warm
+
+
+def test_detailed_telemetry_metrics(sample_config):
+    tracker = HealthTracker(sample_config)
+    tracker.statuses["test-node-1"].state = NodeState.ONLINE
+
+    tracker.record_request_start("test-node-1")
+    tracker.record_request_end(
+        "test-node-1",
+        success=True,
+        prompt_tokens=1600,
+        completion_tokens=500,
+        duration_sec=20.0,
+        tokens_per_sec=25.0,
+    )
+
+    st = tracker.statuses["test-node-1"]
+    assert st.last_prompt_tokens == 1600
+    assert st.last_completion_tokens == 500
+    assert st.last_duration_sec == 20.0
+    assert st.last_tokens_per_sec == 25.0
+    assert st.total_tokens_generated == 500
+

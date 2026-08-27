@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Agent-Mesh // Multi-Device Network Health</title>
+  <title>Agent-Mesh // Fleet Telemetry & Health Dashboard</title>
   <style>
     :root {
       --bg: #0b0f19;
@@ -14,8 +14,10 @@
       --accent: #38bdf8;
       --green: #22c55e;
       --yellow: #eab308;
+      --orange: #f97316;
       --red: #ef4444;
       --purple: #a855f7;
+      --cyan: #06b6d4;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -25,7 +27,7 @@
       line-height: 1.5;
       padding: 2rem;
     }
-    .container { max-width: 1200px; margin: 0 auto; }
+    .container { max-width: 1240px; margin: 0 auto; }
     header {
       display: flex;
       justify-content: space-between;
@@ -64,7 +66,7 @@
 
     .stats-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
       gap: 1rem;
       margin-bottom: 2rem;
     }
@@ -74,12 +76,12 @@
       border-radius: 8px;
       padding: 1.25rem;
     }
-    .stat-label { font-size: 0.8rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
-    .stat-val { font-size: 1.75rem; font-weight: 700; margin-top: 0.25rem; color: #fff; }
+    .stat-label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+    .stat-val { font-size: 1.6rem; font-weight: 700; margin-top: 0.25rem; color: #fff; }
 
     .grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
       gap: 1.5rem;
       margin-bottom: 2rem;
     }
@@ -90,6 +92,9 @@
       padding: 1.5rem;
       position: relative;
       overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
     }
     .node-card::before {
       content: "";
@@ -105,9 +110,8 @@
       display: flex;
       justify-content: space-between;
       align-items: flex-start;
-      margin-bottom: 1rem;
     }
-    .node-title { font-size: 1.15rem; font-weight: 600; color: #fff; }
+    .node-title { font-size: 1.15rem; font-weight: 600; color: #fff; display: flex; align-items: center; gap: 0.5rem; }
     .node-url { font-size: 0.8rem; color: var(--text-muted); font-family: monospace; }
     .priority-badge {
       font-size: 0.75rem;
@@ -121,19 +125,17 @@
       display: flex;
       align-items: baseline;
       gap: 0.5rem;
-      margin: 1rem 0;
       padding: 0.75rem;
       background: #0f172a;
       border-radius: 6px;
     }
-    .latency-num { font-size: 1.5rem; font-weight: 700; font-family: monospace; }
+    .latency-num { font-size: 1.4rem; font-weight: 700; font-family: monospace; }
     .latency-p { font-size: 0.8rem; color: var(--text-muted); }
 
     .roles-list {
       display: flex;
       flex-wrap: wrap;
       gap: 0.4rem;
-      margin-bottom: 1rem;
     }
     .role-tag {
       font-size: 0.75rem;
@@ -149,19 +151,142 @@
       color: var(--accent);
       border-color: rgba(56, 189, 248, 0.3);
     }
+    .role-tag.reasoning {
+      background: rgba(234, 179, 8, 0.15);
+      color: var(--yellow);
+      border-color: rgba(234, 179, 8, 0.3);
+    }
 
+    /* VRAM & Offload Section */
     .vram-section {
       background: #0f172a;
-      border-radius: 6px;
-      padding: 0.75rem;
-      margin-top: 1rem;
+      border-radius: 8px;
+      padding: 0.9rem;
       font-size: 0.85rem;
+      border: 1px solid #1e293b;
     }
-    .vram-header { display: flex; justify-content: space-between; color: var(--text-muted); margin-bottom: 0.35rem; }
-    .warm-badge { font-weight: 600; }
-    .warm-badge.warm { color: var(--green); }
-    .warm-badge.cold { color: var(--text-muted); }
-    .model-name { font-family: monospace; color: #fff; font-weight: 600; }
+    .vram-header { display: flex; justify-content: space-between; align-items: center; color: var(--text-muted); margin-bottom: 0.45rem; }
+    .model-name { font-family: monospace; color: #fff; font-weight: 700; font-size: 0.95rem; }
+    
+    .model-tags {
+      display: flex;
+      gap: 0.35rem;
+      margin-top: 0.25rem;
+    }
+    .model-meta-badge {
+      font-size: 0.7rem;
+      padding: 0.1rem 0.4rem;
+      border-radius: 4px;
+      background: #1e293b;
+      color: var(--cyan);
+      font-family: monospace;
+    }
+
+    /* Split progress bar */
+    .offload-bar-wrapper {
+      margin-top: 0.65rem;
+    }
+    .offload-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.75rem;
+      margin-bottom: 0.3rem;
+    }
+    .offload-bar-track {
+      height: 8px;
+      border-radius: 4px;
+      background: #1e293b;
+      display: flex;
+      overflow: hidden;
+    }
+    .bar-gpu {
+      background: var(--green);
+      height: 100%;
+      transition: width 0.3s ease;
+    }
+    .bar-cpu {
+      background: var(--orange);
+      height: 100%;
+      transition: width 0.3s ease;
+    }
+
+    .swap-alert {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 0.2rem 0.5rem;
+      border-radius: 4px;
+      margin-top: 0.5rem;
+    }
+    .swap-alert.active {
+      background: rgba(249, 115, 22, 0.15);
+      color: var(--orange);
+      border: 1px solid rgba(249, 115, 22, 0.3);
+    }
+    .swap-alert.pure-gpu {
+      background: rgba(34, 197, 94, 0.15);
+      color: var(--green);
+      border: 1px solid rgba(34, 197, 94, 0.3);
+    }
+    .swap-alert.idle {
+      background: rgba(148, 163, 184, 0.15);
+      color: var(--text-muted);
+    }
+
+    /* Performance / Rate Widget */
+    .perf-widget {
+      background: #0f172a;
+      border-radius: 8px;
+      padding: 0.75rem;
+      border: 1px solid #1e293b;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .perf-rate {
+      font-size: 1.2rem;
+      font-weight: 700;
+      font-family: monospace;
+      color: var(--accent);
+    }
+    .perf-details {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      text-align: right;
+    }
+
+    /* Installed Models Inventory */
+    .inventory-section {
+      font-size: 0.8rem;
+    }
+    .inventory-title {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.35rem;
+    }
+    .inventory-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+    }
+    .inventory-badge {
+      font-family: monospace;
+      font-size: 0.75rem;
+      padding: 0.15rem 0.45rem;
+      border-radius: 4px;
+      background: #1e293b;
+      color: var(--text);
+      border: 1px solid #334155;
+    }
+    .inventory-badge.active-model {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: rgba(56, 189, 248, 0.1);
+    }
 
     .type-badge {
       font-size: 0.7rem;
@@ -189,11 +314,11 @@
     .metrics-row {
       display: flex;
       justify-content: space-between;
-      margin-top: 1rem;
       font-size: 0.8rem;
       color: var(--text-muted);
       border-top: 1px solid var(--card-border);
       padding-top: 0.75rem;
+      margin-top: auto;
     }
   </style>
 </head>
@@ -202,7 +327,7 @@
     <header>
       <div class="brand">
         <h1>Agent-Mesh Gateway</h1>
-        <span>v0.1.0</span>
+        <span>Fleet Health & Diagnostics</span>
       </div>
       <div class="header-actions">
         <span id="mesh-badge" class="status-badge status-healthy">Checking...</span>
@@ -224,13 +349,17 @@
         <div id="stat-total" class="stat-val">0</div>
       </div>
       <div class="stat-card">
+        <div class="stat-label">Total Tokens Streamed</div>
+        <div id="stat-tokens" class="stat-val">0</div>
+      </div>
+      <div class="stat-card">
         <div class="stat-label">Nodes Degraded / Down</div>
         <div id="stat-down" class="stat-val">--</div>
       </div>
     </div>
 
     <div id="nodes-container" class="grid">
-      <!-- Injected via JavaScript -->
+      <!-- Injected dynamically -->
     </div>
   </div>
 
@@ -253,37 +382,115 @@
       badge.innerText = data.status.toUpperCase();
       badge.className = `status-badge status-${data.status}`;
 
+      // Aggregate total tokens generated across all nodes
+      const totalTokens = (data.nodes || []).reduce((acc, n) => acc + (n.total_tokens_generated || n.tokens_generated || 0), 0);
+
       // Update counters
       document.getElementById('stat-online').innerText = `${data.online_nodes} / ${data.total_nodes}`;
       document.getElementById('stat-active').innerText = data.active_requests;
       document.getElementById('stat-total').innerText = data.total_requests;
+      document.getElementById('stat-tokens').innerText = totalTokens.toLocaleString();
       document.getElementById('stat-down').innerText = `${data.degraded_nodes + data.offline_nodes}`;
 
       // Render cards
       const container = document.getElementById('nodes-container');
       container.innerHTML = '';
 
-      data.nodes.forEach(node => {
+      (data.nodes || []).forEach(node => {
         const card = document.createElement('div');
-        const stateClass = node.state.toLowerCase();
+        const stateClass = (node.state || 'offline').toLowerCase();
         card.className = `node-card ${stateClass}`;
 
-        const isAutocomplete = node.roles.includes('autocomplete');
-        const rolesHtml = node.roles.map(r => 
-          `<span class="role-tag ${r === 'autocomplete' ? 'autocomplete' : ''}">${r}</span>`
+        const rolesHtml = (node.roles || []).map(r => 
+          `<span class="role-tag ${r}">${r}</span>`
         ).join('');
 
-        const isContainer = node.is_container;
-        const isAutoScaled = node.is_auto_scaled;
         let typeBadgeHtml = '<span class="type-badge native">Native</span>';
-        if (isAutoScaled) {
+        if (node.is_auto_scaled) {
           typeBadgeHtml = '<span class="type-badge scaled">Auto-Scaled</span>';
-        } else if (isContainer) {
+        } else if (node.is_container) {
           typeBadgeHtml = `<span class="type-badge docker">Docker${node.container_id ? ` (${node.container_id})` : ''}</span>`;
         }
 
         const latencyColor = node.state === 'OFFLINE' ? 'var(--red)' : (node.latency_ms > 200 ? 'var(--yellow)' : 'var(--green)');
         const latencyText = node.state === 'OFFLINE' ? 'OFFLINE' : `${node.latency_ms} ms`;
+
+        // Active Model & VRAM / RAM Split
+        const activeName = node.active_model_name || (node.loaded_models && node.loaded_models[0]) || node.pinned_model || 'Idle / None Loaded';
+        const isWarm = !!(node.active_model_name || node.pinned_model_warm || (node.loaded_models && node.loaded_models.length > 0));
+        
+        let metaBadgesHtml = '';
+        if (node.active_model_parameter_size) metaBadgesHtml += `<span class="model-meta-badge">${node.active_model_parameter_size}</span>`;
+        if (node.active_model_quantization) metaBadgesHtml += `<span class="model-meta-badge">${node.active_model_quantization}</span>`;
+        if (node.active_model_context_length) metaBadgesHtml += `<span class="model-meta-badge">Ctx: ${node.active_model_context_length}</span>`;
+
+        let offloadBarHtml = '';
+        let swapAlertHtml = '<div class="swap-alert idle">○ No Model Active in Memory</div>';
+
+        if (isWarm && node.active_model_size_mb) {
+          const gpuPct = node.active_model_gpu_pct ?? 100;
+          const cpuPct = node.active_model_cpu_pct ?? 0;
+          const vramGb = ((node.active_model_vram_mb || 0) / 1024).toFixed(1);
+          const totalGb = (node.active_model_size_mb / 1024).toFixed(1);
+          const cpuRamGb = Math.max(0, (node.active_model_size_mb - (node.active_model_vram_mb || 0)) / 1024).toFixed(1);
+
+          offloadBarHtml = `
+            <div class="offload-bar-wrapper">
+              <div class="offload-labels">
+                <span style="color: var(--green)">GPU VRAM: ${vramGb} GB (${gpuPct}%)</span>
+                <span style="color: ${cpuPct > 0 ? 'var(--orange)' : 'var(--text-muted)'}">CPU RAM: ${cpuRamGb} GB (${cpuPct}%)</span>
+              </div>
+              <div class="offload-bar-track">
+                <div class="bar-gpu" style="width: ${gpuPct}%"></div>
+                <div class="bar-cpu" style="width: ${cpuPct}%"></div>
+              </div>
+            </div>
+          `;
+
+          if (node.is_swapping || cpuPct > 0) {
+            swapAlertHtml = `<div class="swap-alert active">⚠️ Memory Swap Active (${cpuPct}% CPU Offload)</div>`;
+          } else {
+            swapAlertHtml = `<div class="swap-alert pure-gpu">✨ 100% Pure GPU (Zero Swap)</div>`;
+          }
+        } else if (isWarm) {
+          swapAlertHtml = `<div class="swap-alert pure-gpu">● Model Loaded in VRAM</div>`;
+        }
+
+        // Performance / TPS widget
+        let perfWidgetHtml = '';
+        if (node.last_tokens_per_sec || node.last_completion_tokens) {
+          const tps = node.last_tokens_per_sec ? `${node.last_tokens_per_sec} tok/s` : '-- tok/s';
+          const promptInfo = node.last_prompt_tokens ? `Prompt: ${node.last_prompt_tokens} tok` : '';
+          const compInfo = node.last_completion_tokens ? `Gen: ${node.last_completion_tokens} tok` : '';
+          const durInfo = node.last_duration_sec ? `in ${node.last_duration_sec}s` : '';
+          perfWidgetHtml = `
+            <div class="perf-widget">
+              <div>
+                <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;">Latest Gen Speed</div>
+                <div class="perf-rate">⚡ ${tps}</div>
+              </div>
+              <div class="perf-details">
+                <div>${promptInfo} ${compInfo}</div>
+                <div style="color: var(--cyan);">${durInfo}</div>
+              </div>
+            </div>
+          `;
+        }
+
+        // Installed Models Inventory
+        let inventoryHtml = '';
+        if (node.available_models && node.available_models.length > 0) {
+          const badges = node.available_models.map(m => {
+            const isActive = (node.active_model_name && m.includes(node.active_model_name)) || (node.loaded_models && node.loaded_models.some(lm => lm.includes(m)));
+            return `<span class="inventory-badge ${isActive ? 'active-model' : ''}">${isActive ? '● ' : ''}${m}</span>`;
+          }).join('');
+          inventoryHtml = `
+            <div class="inventory-section">
+              <div class="inventory-title">Installed Node Models</div>
+              <div class="inventory-list">${badges}</div>
+            </div>
+          `;
+        }
 
         card.innerHTML = `
           <div class="node-header">
@@ -303,17 +510,21 @@
 
           <div class="vram-section">
             <div class="vram-header">
-              <span>Pinned VRAM Model</span>
-              <span class="warm-badge ${node.pinned_model_warm ? 'warm' : 'cold'}">
-                ${node.pinned_model_warm ? '● WARM (VRAM)' : '○ NOT LOADED'}
-              </span>
+              <span>Active Memory Residency</span>
+              <span style="font-size: 0.75rem; color: ${isWarm ? 'var(--green)' : 'var(--text-muted)'}">${isWarm ? '● RESIDENT' : '○ IDLE'}</span>
             </div>
-            <div class="model-name">${node.pinned_model || 'None specified'}</div>
+            <div class="model-name">${activeName}</div>
+            ${metaBadgesHtml ? `<div class="model-tags">${metaBadgesHtml}</div>` : ''}
+            ${offloadBarHtml}
+            ${swapAlertHtml}
           </div>
+
+          ${perfWidgetHtml}
+          ${inventoryHtml}
 
           <div class="metrics-row">
             <span>In-flight: <strong>${node.active_requests}</strong></span>
-            <span>Total: <strong>${node.total_requests}</strong></span>
+            <span>Total Reqs: <strong>${node.total_requests}</strong></span>
             <span>Errors: <strong style="color: ${node.failed_requests > 0 ? 'var(--red)' : 'inherit'}">${node.failed_requests}</strong></span>
           </div>
         `;

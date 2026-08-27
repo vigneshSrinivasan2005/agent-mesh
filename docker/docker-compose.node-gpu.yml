@@ -12,6 +12,9 @@ services:
       - OLLAMA_NUM_PARALLEL=${OLLAMA_NUM_PARALLEL:-4}
       - OLLAMA_MAX_LOADED_MODELS=${OLLAMA_MAX_LOADED_MODELS:-2}
       - OLLAMA_FLASH_ATTENTION=1
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     deploy:
       resources:
         reservations:

@@ -152,6 +152,18 @@ class HealthTracker:
                         sorted_latencies[min(p95_idx, len(sorted_latencies) - 1)], 2
                     )
 
+                # Extract available installed models if /api/tags responded
+                available_models: List[str] = []
+                try:
+                    data = resp.json()
+                    for m in data.get("models", []):
+                        m_name = m.get("name") or m.get("model")
+                        if m_name:
+                            available_models.append(m_name)
+                except Exception:
+                    pass
+                status.available_models = available_models
+
                 # Check VRAM active loaded models if Ollama
                 loaded_models: List[str] = []
                 pinned_warm = False
@@ -161,10 +173,42 @@ class HealthTracker:
                         ps_resp = await client.get(ps_url, headers=headers)
                         if ps_resp.status_code == 200:
                             ps_data = ps_resp.json()
-                            for m in ps_data.get("models", []):
+                            models_info = ps_data.get("models", [])
+                            for m in models_info:
                                 m_name = m.get("name", "")
                                 if m_name:
                                     loaded_models.append(m_name)
+                            
+                            if models_info:
+                                m0 = models_info[0]
+                                status.active_model_name = m0.get("name")
+                                size_bytes = m0.get("size", 0)
+                                vram_bytes = m0.get("size_vram", 0)
+                                status.active_model_size_mb = round(size_bytes / (1024 * 1024), 1)
+                                status.active_model_vram_mb = round(vram_bytes / (1024 * 1024), 1)
+                                if size_bytes > 0:
+                                    status.active_model_gpu_pct = round((vram_bytes / size_bytes) * 100, 1)
+                                    status.active_model_cpu_pct = round(((size_bytes - vram_bytes) / size_bytes) * 100, 1)
+                                    status.is_swapping = (size_bytes - vram_bytes) > 0
+                                else:
+                                    status.active_model_gpu_pct = 100.0
+                                    status.active_model_cpu_pct = 0.0
+                                    status.is_swapping = False
+
+                                details = m0.get("details", {})
+                                status.active_model_quantization = details.get("quantization_level")
+                                status.active_model_parameter_size = details.get("parameter_size")
+                                status.active_model_context_length = m0.get("context_length")
+                            else:
+                                status.active_model_name = None
+                                status.active_model_size_mb = None
+                                status.active_model_vram_mb = None
+                                status.active_model_gpu_pct = None
+                                status.active_model_cpu_pct = None
+                                status.active_model_quantization = None
+                                status.active_model_parameter_size = None
+                                status.active_model_context_length = None
+                                status.is_swapping = False
                     except Exception:
                         pass
 
@@ -206,7 +250,16 @@ class HealthTracker:
             self.statuses[node_name].active_requests += 1
             self.statuses[node_name].total_requests += 1
 
-    def record_request_end(self, node_name: str, success: bool, tokens: int = 0) -> None:
+    def record_request_end(
+        self,
+        node_name: str,
+        success: bool,
+        tokens: int = 0,
+        prompt_tokens: Optional[int] = None,
+        completion_tokens: Optional[int] = None,
+        duration_sec: Optional[float] = None,
+        tokens_per_sec: Optional[float] = None,
+    ) -> None:
         if node_name in self.statuses:
             st = self.statuses[node_name]
             st.active_requests = max(0, st.active_requests - 1)
@@ -214,6 +267,16 @@ class HealthTracker:
                 st.failed_requests += 1
             if tokens > 0:
                 st.tokens_generated += tokens
+                st.total_tokens_generated += tokens
+            if completion_tokens is not None and completion_tokens > 0:
+                st.last_completion_tokens = completion_tokens
+                st.total_tokens_generated += completion_tokens
+            if prompt_tokens is not None:
+                st.last_prompt_tokens = prompt_tokens
+            if duration_sec is not None:
+                st.last_duration_sec = duration_sec
+            if tokens_per_sec is not None:
+                st.last_tokens_per_sec = tokens_per_sec
 
     def get_summary(self) -> MeshHealthSummary:
         node_list = list(self.statuses.values())

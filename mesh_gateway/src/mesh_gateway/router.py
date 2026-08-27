@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 
 import httpx
@@ -152,6 +153,7 @@ class MeshRouter:
         if node.api_key:
             req_headers["Authorization"] = f"Bearer {node.api_key}"
 
+        start_time = time.perf_counter()
         self.health.record_request_start(node.name)
         try:
             resp = await self._http_client.post(
@@ -160,18 +162,32 @@ class MeshRouter:
                 headers=req_headers,
                 timeout=httpx.Timeout(node.timeout_seconds),
             )
+            duration = round(time.perf_counter() - start_time, 2)
             if resp.status_code >= 400:
-                self.health.record_request_end(node.name, success=False)
+                self.health.record_request_end(node.name, success=False, duration_sec=duration)
                 raise HTTPException(
                     status_code=resp.status_code,
                     detail=f"Node '{node.name}' returned error: {resp.text}",
                 )
 
             data = resp.json()
-            self.health.record_request_end(node.name, success=True)
+            usage = data.get("usage", {}) if isinstance(data, dict) else {}
+            p_tokens = usage.get("prompt_tokens")
+            c_tokens = usage.get("completion_tokens") or usage.get("total_tokens", 0)
+            tps = round(c_tokens / duration, 2) if (duration > 0 and c_tokens) else None
+
+            self.health.record_request_end(
+                node.name,
+                success=True,
+                prompt_tokens=p_tokens,
+                completion_tokens=c_tokens,
+                duration_sec=duration,
+                tokens_per_sec=tps,
+            )
             return data
         except httpx.RequestError as e:
-            self.health.record_request_end(node.name, success=False)
+            duration = round(time.perf_counter() - start_time, 2)
+            self.health.record_request_end(node.name, success=False, duration_sec=duration)
             raise HTTPException(
                 status_code=502,
                 detail=f"Failed to communicate with node '{node.name}' at {node.base_url}: {e}",
@@ -195,6 +211,7 @@ class MeshRouter:
         if node.api_key:
             req_headers["Authorization"] = f"Bearer {node.api_key}"
 
+        start_time = time.perf_counter()
         self.health.record_request_start(node.name)
         token_count = 0
         success = False
@@ -232,7 +249,8 @@ class MeshRouter:
 
             if resp.status_code >= 400:
                 error_bytes = await resp.aread()
-                self.health.record_request_end(node.name, success=False)
+                duration = round(time.perf_counter() - start_time, 2)
+                self.health.record_request_end(node.name, success=False, duration_sec=duration)
                 yield f"data: {json.dumps({'error': error_bytes.decode('utf-8', errors='replace')})}\n\n"
                 return
 
@@ -245,4 +263,13 @@ class MeshRouter:
         except Exception as e:
             yield f"data: {json.dumps({'error': f'Streaming error from node {node.name}: {e}'})}\n\n"
         finally:
-            self.health.record_request_end(node.name, success=success, tokens=token_count)
+            duration = round(time.perf_counter() - start_time, 2)
+            tps = round(token_count / duration, 2) if (duration > 0 and token_count > 0) else None
+            self.health.record_request_end(
+                node.name,
+                success=success,
+                tokens=token_count,
+                completion_tokens=token_count,
+                duration_sec=duration,
+                tokens_per_sec=tps,
+            )

@@ -135,14 +135,34 @@ class NodeHealthStatus(BaseModel):
     p95_latency_ms: float = 0.0
     last_check: Optional[str] = None
     loaded_models: List[str] = Field(default_factory=list)
+    available_models: List[str] = Field(default_factory=list)
     pinned_model: Optional[str] = None
     pinned_model_warm: bool = False
     total_requests: int = 0
     active_requests: int = 0
     failed_requests: int = 0
     tokens_generated: int = 0
+    total_tokens_generated: int = 0
     error_message: Optional[str] = None
     latency_history: List[float] = Field(default_factory=list)
+    
+    # Active Model & Memory / Offload Telemetry
+    active_model_name: Optional[str] = None
+    active_model_size_mb: Optional[float] = None
+    active_model_vram_mb: Optional[float] = None
+    active_model_gpu_pct: Optional[float] = None
+    active_model_cpu_pct: Optional[float] = None
+    active_model_quantization: Optional[str] = None
+    active_model_parameter_size: Optional[str] = None
+    active_model_context_length: Optional[int] = None
+    is_swapping: bool = False
+
+    # Generation Rate & Token Telemetry
+    last_tokens_per_sec: Optional[float] = None
+    last_prompt_tokens: Optional[int] = None
+    last_completion_tokens: Optional[int] = None
+    last_duration_sec: Optional[float] = None
+
     # Container Telemetry
     is_container: bool = False
     container_id: Optional[str] = None
