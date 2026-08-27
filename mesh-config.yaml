@@ -18,12 +18,14 @@ nodes:
       - edit
       - reasoning
     priority: 1
-    pinned_model: qwen2.5-coder:7b
+    pinned_model: gemma2:9b
     model_aliases:
-      reasoning-chat: qwen2.5-coder:7b
+      reasoning-chat: gemma2:9b
+      gemma-9b: gemma2:9b
+      gemma2:9b: gemma2:9b
       qwen-7b: qwen2.5-coder:7b
       qwen2.5-coder:7b: qwen2.5-coder:7b
       deepseek-r1: deepseek-r1:8b
       deepseek-r1:8b: deepseek-r1:8b
-      mesh-reasoning: qwen2.5-coder:7b
+      mesh-reasoning: gemma2:9b
       fast-edit: qwen2.5-coder:7b
