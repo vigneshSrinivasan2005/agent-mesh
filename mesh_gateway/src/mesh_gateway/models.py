@@ -113,9 +113,24 @@ class MeshSettings(BaseModel):
         default=300.0,
         description="Latency threshold in ms above which a node is marked DEGRADED",
     )
+    auto_discovery: bool = Field(
+        default=True,
+        description="Automatically discover and register LAN worker nodes via UDP beacon & mDNS",
+    )
     auto_scaling: AutoScalingConfig = Field(
         default_factory=AutoScalingConfig, description="Container auto-scaling engine config"
     )
+
+
+class NodeRegistrationRequest(BaseModel):
+    name: str
+    base_url: str = "http://127.0.0.1:11434"
+    engine: NodeEngine = NodeEngine.OLLAMA
+    role: Optional[str] = None
+    roles: Optional[List[str]] = None
+    pinned_model: Optional[str] = None
+    grpc_port: Optional[int] = None
+    priority: int = 1
 
 
 class MeshConfig(BaseModel):

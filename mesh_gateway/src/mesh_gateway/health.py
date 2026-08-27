@@ -73,9 +73,19 @@ class HealthTracker:
         self.nodes_by_name[node.name] = node
 
     def register_node(self, node: NodeConfig) -> None:
-        """Dynamically add a new node (e.g. from auto-scaler) to health monitoring."""
-        if not any(n.name == node.name for n in self.config.nodes):
-            self.config.nodes.append(node)
+        """Dynamically add a new node (e.g. from auto-discovery or auto-scaler) to health monitoring."""
+        norm_url = node.base_url.replace("://localhost", "://127.0.0.1").rstrip("/")
+        # Check if already registered by name or URL
+        for existing in self.config.nodes:
+            if existing.name == node.name:
+                self._init_node_status(node)
+                return
+            existing_url = existing.base_url.replace("://localhost", "://127.0.0.1").rstrip("/")
+            if existing_url == norm_url:
+                # Update existing node rather than duplicating
+                return
+
+        self.config.nodes.append(node)
         self._init_node_status(node)
 
     def unregister_node(self, node_name: str) -> None:
@@ -134,15 +144,16 @@ class HealthTracker:
         close_client_after = self._client is None
 
         try:
+            resolved_base = node.base_url.replace("://localhost", "://127.0.0.1")
             # Determine health probe endpoint based on engine
             if node.engine == NodeEngine.OLLAMA:
-                probe_url = f"{node.base_url.rstrip('/')}/api/tags"
-                ps_url = f"{node.base_url.rstrip('/')}/api/ps"
+                probe_url = f"{resolved_base.rstrip('/')}/api/tags"
+                ps_url = f"{resolved_base.rstrip('/')}/api/ps"
             elif node.engine == NodeEngine.VLLM or node.engine == NodeEngine.OPENAI:
-                probe_url = f"{node.base_url.rstrip('/')}/v1/models"
+                probe_url = f"{resolved_base.rstrip('/')}/v1/models"
                 ps_url = None
             else:
-                probe_url = node.base_url
+                probe_url = resolved_base
                 ps_url = None
 
             resp = await client.get(probe_url, headers=headers)

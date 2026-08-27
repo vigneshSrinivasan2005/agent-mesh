@@ -38,9 +38,16 @@ class MeshRouter:
             await self.grpc_manager.close_all()
 
     def register_node(self, node: NodeConfig) -> None:
-        """Register a dynamically scaled node with the router."""
-        if not any(n.name == node.name for n in self.config.nodes):
-            self.config.nodes.append(node)
+        """Register a dynamically discovered or scaled node with the router."""
+        norm_url = node.base_url.replace("://localhost", "://127.0.0.1").rstrip("/")
+        for idx, existing in enumerate(self.config.nodes):
+            if existing.name == node.name:
+                self.config.nodes[idx] = node
+                return
+            existing_url = existing.base_url.replace("://localhost", "://127.0.0.1").rstrip("/")
+            if existing_url == norm_url:
+                return
+        self.config.nodes.append(node)
 
     def unregister_node(self, node_name: str) -> None:
         """Unregister a scaled node when scaled down."""
@@ -173,7 +180,8 @@ class MeshRouter:
 
         forward_body = dict(body)
         forward_body["model"] = resolved_model
-        target_url = f"{node.base_url.rstrip('/')}{path}"
+        resolved_base = node.base_url.replace("://localhost", "://127.0.0.1")
+        target_url = f"{resolved_base.rstrip('/')}{path}"
         req_headers = {"Content-Type": "application/json"}
         if node.api_key:
             req_headers["Authorization"] = f"Bearer {node.api_key}"
@@ -265,7 +273,8 @@ class MeshRouter:
 
         forward_body = dict(body)
         forward_body["model"] = resolved_model
-        target_url = f"{node.base_url.rstrip('/')}{path}"
+        resolved_base = node.base_url.replace("://localhost", "://127.0.0.1")
+        target_url = f"{resolved_base.rstrip('/')}{path}"
         req_headers = {"Content-Type": "application/json"}
         if node.api_key:
             req_headers["Authorization"] = f"Bearer {node.api_key}"

@@ -46,181 +46,95 @@ Running both a fast **1.5B–3B FIM (Fill-in-the-Middle) autocomplete model** (f
 
 ---
 
-## Features
+## Quickstart: Zero-Config Docker & LAN Auto-Discovery
 
-- **Zero VRAM Contention**: Autocomplete requests route to your fast Mac/CPU node, while heavy reasoning calls route to your GPU rig. Models stay permanently warm in VRAM (`keep_alive: -1`).
-- **Persistent HTTP/2 gRPC Mesh**: Sub-millisecond binary token chunk streaming and continuous hardware telemetry without HTTP polling.
-- **Dynamic Local & Remote Container Auto-Scaling**: Automatically spins up Ollama/vLLM Docker worker replicas when agent coding queues spike, and reaps them when idle.
-- **Embedded Web Dashboard**: Real-time fleet health, latency percentiles (P50/P95), and VRAM monitor served directly at `http://localhost:8000/status`.
-- **1-Click IDE Sync**: Export configurations for Continue.dev, Roo Code, and Cline in seconds.
+No YAML configuration required. Simply run the leader on your main machine and worker nodes on any other PC across your local network:
+
+### 1. Start the Leader Node (Main Machine / MacBook)
+```bash
+docker compose up leader-node -d
+```
+*Starts the Master Gateway on port `8000`, serves the live Web Dashboard at `http://localhost:8000/status`, and begins auto-discovering all LAN worker devices.*
 
 ---
 
-## Quickstart & Setup Guide
+### 2. Start Worker Nodes (Any PC / GPU Rig on your Network)
+```bash
+# Auto-detects GPU and automatically infers role (<4B -> autocomplete, >=7B -> reasoning):
+MODEL=deepseek-r1:8b docker compose up worker-node -d
 
-### 1. Installation (Run on all machines)
+# Or with an explicit custom role:
+ROLE=autocomplete MODEL=qwen2.5-coder:1.5b-base docker compose up worker-node -d
+```
+*The worker node pulls the model into a persistent volume, keeps it warm in memory, and announces itself to the leader. It immediately appears on the leader's dashboard.*
+
+---
+
+### 3. Native CLI Mode (Without Docker)
+
+You can also run without Docker using the `agent-mesh` CLI:
 
 ```bash
-# Clone the repository
-git clone https://github.com/vigneshSrinivasan2005/agent-mesh.git
-cd agent-mesh
+# On Leader Machine:
+agent-mesh leader-up
 
-# Create virtual environment and install
-python -m venv .venv
-.\.venv\Scripts\activate      # Windows
-# source .venv/bin/activate   # Linux / macOS
-
-pip install -e "mesh_gateway[dev]"
+# On Worker Machine:
+agent-mesh worker-up deepseek-r1:8b
+# (Or with explicit role):
+agent-mesh worker-up qwen2.5-coder:1.5b-base --role autocomplete
 ```
 
 ---
 
-### 2. Start Remote Node Agent Daemons (Worker Machines)
+## (Optional) Advanced Static Configuration (`mesh-config.yaml`)
 
-Run the Node Agent on each physical machine you want to pool into the mesh:
-
-#### On Machine A (e.g. Mac / Laptop for Tab Autocomplete):
-```bash
-# Ensure local Ollama is running on port 11434 with pinned FIM model:
-ollama run qwen2.5-coder:1.5b-base
-
-# Start Node Agent daemon:
-agent-mesh agent run --host 0.0.0.0 --port 50051 --name macbook-m-series --engine-url http://127.0.0.1:11434
-```
-
-#### On Machine B (e.g. Dedicated GPU Rig for Heavy Reasoning):
-```bash
-# Option 1: Native Node Agent daemon
-agent-mesh agent run --host 0.0.0.0 --port 50051 --name desktop-rtx-4090 --engine-url http://127.0.0.1:11434
-
-# Option 2: Docker Containerized Worker with GPU passthrough
-agent-mesh node-up --role reasoning --model qwen2.5-coder:14b --port 11434 --gpu
-# Or with Docker Compose:
-docker compose -f docker/docker-compose.node-gpu.yml up -d
-```
-
----
-
-### 3. Configure the Master Gateway (`mesh-config.yaml`)
-
-On your **Main Development Machine**, generate and edit `mesh-config.yaml`:
+If you want to manually pin specific static IPs or customize fallback priorities instead of using auto-discovery, you can generate a `mesh-config.yaml`:
 
 ```bash
 agent-mesh init
 ```
 
-Configure the IP addresses and gRPC ports of your worker devices:
-
 ```yaml
 mesh:
   listen_host: "0.0.0.0"
   listen_port: 8000
-  grpc_port: 50051
+  auto_discovery: true
   health_check_interval_seconds: 5.0
-  fallback_enabled: true
-  degraded_latency_threshold_ms: 300.0
-  auto_scaling:
-    enabled: true
-    scale_up_queue_threshold: 3
-    idle_cooldown_seconds: 60.0
 
 nodes:
-  # Machine A: Fast Mac / CPU for sub-50ms tab autocomplete
-  - name: "macbook-m-series"
+  # Machine A: Fast FIM Autocomplete
+  - name: "macbook-fast-fim"
     base_url: "http://192.168.1.50:11434"
-    grpc_port: 50051
-    engine: "ollama"
     roles: ["autocomplete"]
-    priority: 1
     pinned_model: "qwen2.5-coder:1.5b-base"
-    model_aliases:
-      "tab-autocomplete": "qwen2.5-coder:1.5b-base"
-      "mesh-autocomplete": "qwen2.5-coder:1.5b-base"
 
-  # Machine B: NVIDIA GPU Rig for heavy agent reasoning & coding loops
-  - name: "desktop-rtx-4090"
+  # Machine B: NVIDIA GPU Rig for Heavy Reasoning
+  - name: "desktop-gpu-rig"
     base_url: "http://192.168.1.100:11434"
-    grpc_port: 50051
-    engine: "ollama"
     roles: ["chat", "edit", "reasoning"]
-    priority: 1
-    pinned_model: "qwen2.5-coder:14b"
-    model_aliases:
-      "reasoning-chat": "qwen2.5-coder:14b"
-      "mesh-reasoning": "qwen2.5-coder:14b"
-      "deepseek-r1": "deepseek-r1:14b"
-
-  # Machine C: Fallback Server
-  - name: "homelab-server"
-    base_url: "http://192.168.1.150:11434"
-    grpc_port: 50051
-    engine: "ollama"
-    roles: ["chat", "reasoning", "autocomplete"]
-    priority: 2
-    pinned_model: "deepseek-r1:14b"
+    pinned_model: "deepseek-r1:8b"
 ```
 
 ---
 
-### 4. Run the Master Gateway Daemon
-
-On your **Main Machine**, start the master gateway:
-
-```bash
-agent-mesh run --config mesh-config.yaml
-```
-
 ---
 
-## Running with Docker & Container Orchestration
-
-You can run both the gateway and worker nodes entirely in Docker:
-
-### A. Run the Gateway in Docker
-```bash
-docker compose -f docker/docker-compose.gateway.yml up -d --build
-```
-*Exposes the Gateway & Web Dashboard on `http://localhost:8000` with your local `mesh-config.yaml` mounted.*
-
-### B. Run Worker Nodes in Docker
-
-**NVIDIA GPU Worker (Linux / WSL / Homelab):**
-```bash
-docker compose -f docker/docker-compose.node-gpu.yml up -d
-```
-
-**CPU Worker:**
-```bash
-docker compose -f docker/docker-compose.node-cpu.yml up -d
-```
-
-### C. Spin Up On-Demand Workers via CLI
-```bash
-# Launch a dedicated autocomplete container on port 11435:
-agent-mesh node-up --role autocomplete --model qwen2.5-coder:1.5b-base --port 11435
-
-# Stop and remove worker container:
-agent-mesh node-down agent-mesh-worker-autocomplete-11435
-```
-
----
-
-### 5. Verify Connections & Mesh Health
+### 4. Verify Connections & Mesh Health
 
 ```bash
-# 1. Terminal Fleet Status Table
+# 1. Live Web Dashboard
+# Open http://localhost:8000/status in your browser
+
+# 2. Terminal Fleet Status Table
 agent-mesh status
 
-# 2. One-Time Multi-Device Ping Test
+# 3. One-Time Multi-Device Latency Ping Test
 agent-mesh ping
-
-# 3. Live Web Dashboard
-# Open http://localhost:8000/status in your browser
 ```
 
 ---
 
-## 6. Connect to Your IDE (VS Code, Roo Code, Cline)
+## 5. Connect to Your IDE (VS Code, Roo Code, Cline)
 
 ### A. Continue.dev (1-Click Setup)
 

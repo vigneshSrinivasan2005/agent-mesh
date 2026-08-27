@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 
 from mesh_gateway.config_loader import load_config
+from mesh_gateway.discovery import AutoRoleClassifier, DiscoveryManager
 from mesh_gateway.docker_scaler import DockerScaler
 from mesh_gateway.grpc_client import GrpcMeshManager
 from mesh_gateway.health import HealthTracker
@@ -18,7 +19,9 @@ from mesh_gateway.models import (
     MeshHealthSummary,
     ModelCard,
     ModelListResponse,
+    NodeConfig,
     NodeHealthStatus,
+    NodeRegistrationRequest,
 )
 from mesh_gateway.router import MeshRouter
 
@@ -42,9 +45,23 @@ def create_app(config: Optional[MeshConfig] = None) -> FastAPI:
             if update.loaded_models:
                 st.loaded_models = list(update.loaded_models)
 
+    def _on_node_discovered(discovered_node: NodeConfig):
+        health_tracker.register_node(discovered_node)
+        router.register_node(discovered_node)
+        if discovered_node.transport != "http":
+            asyncio.create_task(
+                grpc_manager.register_node(discovered_node, telemetry_callback=_on_grpc_telemetry)
+            )
+
+    discovery_mgr = DiscoveryManager(
+        node_name="leader-gateway",
+        is_leader=True,
+        on_node_discovered=_on_node_discovered,
+    )
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        # Startup: connect to gRPC nodes, start health prober & auto scaler
+        # Startup: connect to gRPC nodes, start health prober, discovery & auto scaler
         for node in config.nodes:
             if node.transport != "http":
                 asyncio.create_task(
@@ -52,8 +69,12 @@ def create_app(config: Optional[MeshConfig] = None) -> FastAPI:
                 )
         await health_tracker.start()
         docker_scaler.start()
+        if config.mesh.auto_discovery:
+            await discovery_mgr.start()
         yield
-        # Shutdown: stop scaler, prober and clean up connections
+        # Shutdown: stop discovery, scaler, prober and clean up connections
+        if config.mesh.auto_discovery:
+            await discovery_mgr.stop()
         await docker_scaler.stop()
         await health_tracker.stop()
         await router.close()
@@ -78,6 +99,7 @@ def create_app(config: Optional[MeshConfig] = None) -> FastAPI:
     app.state.config = config
     app.state.health = health_tracker
     app.state.router = router
+    app.state.discovery = discovery_mgr
 
     @app.get("/health", response_model=MeshHealthSummary)
     async def get_health_summary() -> MeshHealthSummary:
@@ -93,6 +115,29 @@ def create_app(config: Optional[MeshConfig] = None) -> FastAPI:
             "config": config.model_dump(mode="json"),
             "health": health_tracker.get_summary().model_dump(mode="json"),
         }
+
+    @app.post("/api/mesh/register")
+    async def register_node(req: NodeRegistrationRequest):
+        roles = req.roles or AutoRoleClassifier.infer_roles(req.pinned_model or "", req.role)
+        aliases = {}
+        if req.pinned_model:
+            if "autocomplete" in roles:
+                aliases["tab-autocomplete"] = req.pinned_model
+            if any(r in roles for r in ["chat", "reasoning"]):
+                aliases["reasoning-chat"] = req.pinned_model
+
+        node_cfg = NodeConfig(
+            name=req.name,
+            base_url=req.base_url,
+            engine=req.engine,
+            roles=roles,
+            priority=req.priority,
+            pinned_model=req.pinned_model,
+            model_aliases=aliases,
+            grpc_port=req.grpc_port,
+        )
+        _on_node_discovered(node_cfg)
+        return {"status": "registered", "node": node_cfg.model_dump(mode="json")}
 
     @app.get("/v1/models", response_model=ModelListResponse)
     async def list_models() -> ModelListResponse:

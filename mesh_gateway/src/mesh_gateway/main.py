@@ -162,6 +162,96 @@ def _render_status_table(data: dict) -> None:
 node_app = typer.Typer(help="Manage local Docker worker containers for Agent-Mesh.")
 
 
+@app.command("leader-up")
+def leader_up(
+    model: Optional[str] = typer.Option(None, "--model", "-m", help="Optional model for co-located local worker"),
+    role: Optional[str] = typer.Option(None, "--role", "-r", help="Role for local worker (e.g. autocomplete)"),
+    port: int = typer.Option(8000, "--port", "-p", help="Gateway listen port"),
+    host: str = typer.Option("0.0.0.0", "--host", "-h", help="Gateway listen host"),
+):
+    """Start the Master Gateway & Dashboard in Zero-Config LAN Auto-Discovery Mode."""
+    from mesh_gateway.config_loader import load_config
+    cfg = load_config()
+    cfg.mesh.listen_host = host
+    cfg.mesh.listen_port = port
+    cfg.mesh.auto_discovery = True
+
+    console.print(
+        Panel.fit(
+            f"[bold cyan]Agent-Mesh Leader Gateway v{__version__}[/bold cyan]\n"
+            f"[green]OpenAI-Compatible Base URL:[/green] http://{host}:{port}/v1\n"
+            f"[yellow]Health Status Dashboard:[/yellow]    http://{host}:{port}/status\n"
+            f"[blue]LAN Auto-Discovery:[/blue]          [bold green]ENABLED (UDP Beacon & Subnet Prober)[/bold green]\n"
+            f"[dim]Auto-detecting local & LAN worker devices continuously...[/dim]",
+            border_style="cyan",
+            title="Leader Active",
+        )
+    )
+
+    fastapi_app = create_app(cfg)
+    uvicorn.run(fastapi_app, host=host, port=port)
+
+
+@app.command("worker-up")
+def worker_up(
+    model: str = typer.Argument("qwen2.5-coder:1.5b-base", help="Model name and version (e.g. deepseek-r1:8b)"),
+    role: Optional[str] = typer.Option(None, "--role", "-r", help="Explicit role: autocomplete, chat, edit, reasoning"),
+    port: int = typer.Option(11434, "--port", "-p", help="Host port to bind for worker"),
+    gpu: bool = typer.Option(False, "--gpu", "-g", help="Enable NVIDIA GPU acceleration"),
+    image: str = typer.Option("ollama/ollama:latest", "--image", "-i", help="Worker container image"),
+    leader: Optional[str] = typer.Option(None, "--leader", "-l", help="Leader host URL (optional)"),
+):
+    """Launch a containerized worker node and auto-announce to leader."""
+    from mesh_gateway.discovery import AutoRoleClassifier, DiscoveryManager
+    from mesh_gateway.docker_scaler import DockerScaler
+    from mesh_gateway.models import AutoScalingConfig
+
+    inferred_roles = AutoRoleClassifier.infer_roles(model, role)
+    roles_str = ",".join(inferred_roles)
+
+    if not DockerScaler.is_docker_available():
+        console.print("[bold red]Docker is not running. Starting native announcement instead...[/bold red]")
+    else:
+        scaler = DockerScaler(AutoScalingConfig())
+        with console.status(f"[bold cyan]Starting Docker worker for {model} on port {port}...[/bold cyan]"):
+            success, cid, assigned_port = asyncio.run(
+                scaler.start_worker_container(role=roles_str, model=model, port=port, gpu=gpu, image=image)
+            )
+            if success:
+                console.print(f"[bold green]✓ Worker container {cid[:12]} running on port {assigned_port}![/bold green]")
+
+    # Start discovery announcer
+    console.print(
+        Panel.fit(
+            f"[bold cyan]Agent-Mesh Worker Node[/bold cyan]\n"
+            f"[green]Model:[/green]       {model}\n"
+            f"[magenta]Roles:[/magenta]       {roles_str}\n"
+            f"[blue]Port:[/blue]        {port}\n"
+            f"[dim]Announcing to cluster leader...[/dim]",
+            border_style="magenta",
+            title="Worker Active",
+        )
+    )
+
+    async def _announce():
+        mgr = DiscoveryManager(
+            node_name=f"worker-{model.replace(':', '-')}",
+            is_leader=False,
+            base_url=f"http://127.0.0.1:{port}",
+            role=roles_str,
+            pinned_model=model,
+            leader_host=leader,
+        )
+        await mgr.start()
+        try:
+            while True:
+                await asyncio.sleep(1)
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            await mgr.stop()
+
+    asyncio.run(_announce())
+
+
 @app.command("node-up")
 @node_app.command("up")
 def node_up(
@@ -199,9 +289,6 @@ def node_up(
         console.print(f"  • Endpoint:     [bold]http://127.0.0.1:{assigned_port}[/bold]")
         console.print(f"  • Role:         [magenta]{role}[/magenta]")
         console.print(f"  • Model:        [blue]{model}[/blue]")
-        console.print(
-            "\n[dim]Add this node to mesh-config.yaml or let auto-scaler discover it.[/dim]"
-        )
     else:
         console.print("[bold red]Failed to start Docker worker container.[/bold red]")
         raise typer.Exit(1)
@@ -242,8 +329,11 @@ def agent_run(
     engine_url: str = typer.Option(
         "http://127.0.0.1:11434", "--engine-url", "-e", help="Local Ollama/vLLM URL"
     ),
+    role: Optional[str] = typer.Option(None, "--role", "-r", help="Optional role e.g. autocomplete"),
+    model: Optional[str] = typer.Option(None, "--model", "-m", help="Pinned model name"),
+    leader: Optional[str] = typer.Option(None, "--leader", "-l", help="Leader host URL"),
 ):
-    """Run the gRPC Node Agent daemon on this physical machine."""
+    """Run the gRPC Node Agent daemon with automatic LAN discovery."""
     from mesh_gateway.node_agent import serve_node_agent
 
     console.print(
@@ -252,17 +342,26 @@ def agent_run(
             f"[green]gRPC Endpoint:[/green]     {host}:{port}\n"
             f"[blue]Local Engine URL:[/blue]  {engine_url}\n"
             f"[yellow]Node Identity:[/yellow]     {name}\n"
-            f"[dim]Streaming sub-millisecond telemetry & tokens to main gateway[/dim]",
+            f"[dim]Streaming telemetry and auto-broadcasting on LAN[/dim]",
             border_style="cyan",
             title="Node Agent Active",
         )
     )
 
     async def _main():
-        server = await serve_node_agent(
-            host=host, port=port, node_name=name, local_engine_url=engine_url
+        server, discovery = await serve_node_agent(
+            host=host,
+            port=port,
+            node_name=name,
+            local_engine_url=engine_url,
+            role=role,
+            pinned_model=model,
+            leader_host=leader,
         )
-        await server.wait_for_termination()
+        try:
+            await server.wait_for_termination()
+        finally:
+            await discovery.stop()
 
     asyncio.run(_main())
 

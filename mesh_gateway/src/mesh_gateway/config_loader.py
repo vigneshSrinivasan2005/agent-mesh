@@ -69,8 +69,17 @@ def load_config(config_path: Optional[Path | str] = None) -> MeshConfig:
         if location.exists():
             return _read_config_file(location)
 
-    # Return default config if no file found
-    return get_default_config()
+    # Return pure auto-discovery configuration if no YAML file found
+    return MeshConfig(
+        mesh=MeshSettings(
+            listen_host="0.0.0.0",
+            listen_port=8000,
+            auto_discovery=True,
+            health_check_interval_seconds=5.0,
+            fallback_enabled=True,
+        ),
+        nodes=[],
+    )
 
 
 def _read_config_file(path: Path) -> MeshConfig:

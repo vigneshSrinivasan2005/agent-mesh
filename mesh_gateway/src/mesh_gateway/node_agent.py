@@ -221,8 +221,13 @@ async def serve_node_agent(
     port: int = 50051,
     node_name: str = "local-node",
     local_engine_url: str = "http://127.0.0.1:11434",
-) -> grpc.aio.Server:
-    """Start the gRPC Node Agent server."""
+    role: Optional[str] = None,
+    pinned_model: Optional[str] = None,
+    leader_host: Optional[str] = None,
+) -> tuple[grpc.aio.Server, Any]:
+    """Start the gRPC Node Agent server and discovery beacon."""
+    from mesh_gateway.discovery import DiscoveryManager
+
     server = grpc.aio.server()
     servicer = NodeAgentServicer(
         node_name=node_name,
@@ -233,4 +238,16 @@ async def serve_node_agent(
     server.add_insecure_port(listen_addr)
     logger.info(f"Agent-Mesh Node Agent listening on gRPC {listen_addr}")
     await server.start()
-    return server
+
+    discovery = DiscoveryManager(
+        node_name=node_name,
+        is_leader=False,
+        base_url=local_engine_url,
+        grpc_port=port,
+        role=role,
+        pinned_model=pinned_model,
+        leader_host=leader_host,
+    )
+    await discovery.start()
+
+    return server, discovery

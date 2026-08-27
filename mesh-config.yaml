@@ -1,0 +1,29 @@
+nodes:
+  - name: macbook-fast-fim
+    base_url: http://localhost:11434
+    engine: ollama
+    roles:
+      - autocomplete
+    priority: 1
+    pinned_model: qwen2.5-coder:1.5b-base
+    model_aliases:
+      tab-autocomplete: qwen2.5-coder:1.5b-base
+      qwen-1.5b: qwen2.5-coder:1.5b-base
+
+  - name: desktop-heavy-reasoning
+    base_url: http://10.0.0.216:11434        # <-- Worker IP here
+    engine: ollama
+    roles:
+      - chat
+      - edit
+      - reasoning
+    priority: 1
+    pinned_model: deepseek-r1:14b
+    model_aliases:
+      reasoning-chat: deepseek-r1:14b
+      deepseek-r1: deepseek-r1:14b
+      deepseek-r1:14b: deepseek-r1:14b
+      deepseek-r1:8b: deepseek-r1:8b
+      deepseek-8b: deepseek-r1:8b
+      fast-reasoning: deepseek-r1:8b
+      mesh-reasoning: deepseek-r1:14b

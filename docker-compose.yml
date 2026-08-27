@@ -1,0 +1,50 @@
+services:
+  # =========================================================================
+  # Leader Node: Master Gateway, Live Web Dashboard, LAN Auto-Discovery
+  # =========================================================================
+  leader-node:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.gateway
+    container_name: agent-mesh-leader
+    restart: unless-stopped
+    ports:
+      - "${LEADER_PORT:-8000}:8000"
+      - "50052:50052/udp"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - MESH_AUTO_DISCOVERY=true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command: ["leader-up", "--port", "${LEADER_PORT:-8000}"]
+
+  # =========================================================================
+  # Worker Node: Engine, Persistent Model Cache, Auto-Announce to Leader
+  # =========================================================================
+  worker-node:
+    image: ollama/ollama:latest
+    container_name: agent-mesh-worker
+    restart: unless-stopped
+    ports:
+      - "${WORKER_PORT:-11434}:11434"
+    volumes:
+      - agent_mesh_models:/root/.ollama
+      - ./docker/worker-entrypoint.sh:/entrypoint-mesh.sh:ro
+    environment:
+      - OLLAMA_KEEP_ALIVE=-1
+      - OLLAMA_FLASH_ATTENTION=1
+      - MODEL=${MODEL:-qwen2.5-coder:1.5b-base}
+      - ROLE=${ROLE:-}
+      - LEADER_HOST=${LEADER_HOST:-}
+    entrypoint: ["/entrypoint-mesh.sh"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  agent_mesh_models:
+    name: agent_mesh_models
