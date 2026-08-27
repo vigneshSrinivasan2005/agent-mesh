@@ -229,6 +229,17 @@ class MeshRouter:
                 headers=req_headers,
                 timeout=httpx.Timeout(node.timeout_seconds),
             )
+            # Graceful fallback: if client passed tools to a model without tool support, retry without tools
+            if resp.status_code >= 400 and "does not support tools" in resp.text and ("tools" in forward_body or "tool_choice" in forward_body):
+                forward_body.pop("tools", None)
+                forward_body.pop("tool_choice", None)
+                resp = await self._http_client.post(
+                    target_url,
+                    json=forward_body,
+                    headers=req_headers,
+                    timeout=httpx.Timeout(node.timeout_seconds),
+                )
+
             duration = round(time.perf_counter() - start_time, 3)
             if resp.status_code >= 400:
                 self.health.record_request_end(
@@ -353,6 +364,21 @@ class MeshRouter:
                 timeout=httpx.Timeout(node.timeout_seconds),
             )
             resp = await self._http_client.send(req, stream=True)
+
+            if resp.status_code >= 400:
+                error_bytes = await resp.aread()
+                error_text = error_bytes.decode('utf-8', errors='replace')
+                if "does not support tools" in error_text and ("tools" in forward_body or "tool_choice" in forward_body):
+                    forward_body.pop("tools", None)
+                    forward_body.pop("tool_choice", None)
+                    req = self._http_client.build_request(
+                        "POST",
+                        target_url,
+                        json=forward_body,
+                        headers=req_headers,
+                        timeout=httpx.Timeout(node.timeout_seconds),
+                    )
+                    resp = await self._http_client.send(req, stream=True)
 
             if resp.status_code >= 400:
                 error_bytes = await resp.aread()
