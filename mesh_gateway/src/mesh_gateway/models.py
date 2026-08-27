@@ -123,6 +123,21 @@ class MeshConfig(BaseModel):
     nodes: List[NodeConfig] = Field(default_factory=list)
 
 
+class ModelTokenMetrics(BaseModel):
+    model_name: str
+    total_prompt_tokens: int = 0
+    total_completion_tokens: int = 0
+    total_requests: int = 0
+    last_input_tok_per_sec: Optional[float] = None     # Prompt evaluation speed
+    last_output_tok_per_sec: Optional[float] = None    # Generation speed
+    avg_input_tok_per_sec: Optional[float] = None
+    avg_output_tok_per_sec: Optional[float] = None
+    last_prompt_tokens: Optional[int] = None
+    last_completion_tokens: Optional[int] = None
+    last_ttft_sec: Optional[float] = None              # Time to first token
+    last_duration_sec: Optional[float] = None
+
+
 class NodeHealthStatus(BaseModel):
     name: str
     base_url: str
@@ -144,6 +159,7 @@ class NodeHealthStatus(BaseModel):
     failed_requests: int = 0
     tokens_generated: int = 0
     total_tokens_generated: int = 0
+    total_prompt_tokens: int = 0
     error_message: Optional[str] = None
     latency_history: List[float] = Field(default_factory=list)
     
@@ -158,11 +174,17 @@ class NodeHealthStatus(BaseModel):
     active_model_context_length: Optional[int] = None
     is_swapping: bool = False
 
-    # Generation Rate & Token Telemetry
-    last_tokens_per_sec: Optional[float] = None
+    # Generation & Input/Output Rate Telemetry
+    last_tokens_per_sec: Optional[float] = None          # Backwards compatibility alias for output
+    last_input_tokens_per_sec: Optional[float] = None   # Input / prompt eval tok/s
+    last_output_tokens_per_sec: Optional[float] = None  # Output / generation tok/s
     last_prompt_tokens: Optional[int] = None
     last_completion_tokens: Optional[int] = None
+    last_ttft_sec: Optional[float] = None
     last_duration_sec: Optional[float] = None
+
+    # Per-Model Token & Rate Telemetry (model_name -> ModelTokenMetrics)
+    model_metrics: Dict[str, ModelTokenMetrics] = Field(default_factory=dict)
 
     # Container Telemetry
     is_container: bool = False

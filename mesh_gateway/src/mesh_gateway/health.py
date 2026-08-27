@@ -12,6 +12,7 @@ from rich.console import Console
 from mesh_gateway.models import (
     MeshConfig,
     MeshHealthSummary,
+    ModelTokenMetrics,
     NodeConfig,
     NodeEngine,
     NodeHealthStatus,
@@ -50,6 +51,10 @@ class HealthTracker:
             if target_model not in cfg_models:
                 cfg_models.append(target_model)
 
+        model_metrics: Dict[str, ModelTokenMetrics] = {
+            m: ModelTokenMetrics(model_name=m) for m in cfg_models
+        }
+
         self.statuses[node.name] = NodeHealthStatus(
             name=node.name,
             base_url=node.base_url,
@@ -59,6 +64,7 @@ class HealthTracker:
             state=NodeState.INITIALIZING,
             pinned_model=node.pinned_model,
             configured_models=cfg_models,
+            model_metrics=model_metrics,
             is_container=is_cont,
             container_id=cont_id,
             container_engine="docker" if is_cont else "native",
@@ -270,28 +276,86 @@ class HealthTracker:
         node_name: str,
         success: bool,
         tokens: int = 0,
+        model_name: Optional[str] = None,
         prompt_tokens: Optional[int] = None,
         completion_tokens: Optional[int] = None,
         duration_sec: Optional[float] = None,
+        ttft_sec: Optional[float] = None,
         tokens_per_sec: Optional[float] = None,
+        input_tokens_per_sec: Optional[float] = None,
+        output_tokens_per_sec: Optional[float] = None,
     ) -> None:
         if node_name in self.statuses:
             st = self.statuses[node_name]
             st.active_requests = max(0, st.active_requests - 1)
             if not success:
                 st.failed_requests += 1
-            if tokens > 0:
-                st.tokens_generated += tokens
-                st.total_tokens_generated += tokens
-            if completion_tokens is not None and completion_tokens > 0:
-                st.last_completion_tokens = completion_tokens
-                st.total_tokens_generated += completion_tokens
-            if prompt_tokens is not None:
+
+            gen_tokens = completion_tokens or tokens
+            if gen_tokens > 0:
+                st.tokens_generated += gen_tokens
+                st.total_tokens_generated += gen_tokens
+                st.last_completion_tokens = gen_tokens
+            if prompt_tokens is not None and prompt_tokens > 0:
                 st.last_prompt_tokens = prompt_tokens
+                st.total_prompt_tokens += prompt_tokens
             if duration_sec is not None:
                 st.last_duration_sec = duration_sec
-            if tokens_per_sec is not None:
-                st.last_tokens_per_sec = tokens_per_sec
+            if ttft_sec is not None:
+                st.last_ttft_sec = ttft_sec
+
+            # Compute input / output token rate
+            in_rate = input_tokens_per_sec
+            if in_rate is None and prompt_tokens and prompt_tokens > 0:
+                denom = ttft_sec if (ttft_sec and ttft_sec > 0.001) else (duration_sec if (duration_sec and duration_sec > 0.001) else None)
+                if denom:
+                    in_rate = round(prompt_tokens / denom, 1)
+
+            out_rate = output_tokens_per_sec or tokens_per_sec
+            if out_rate is None and completion_tokens and completion_tokens > 0 and duration_sec and duration_sec > 0:
+                gen_time = max(0.01, duration_sec - (ttft_sec or 0))
+                out_rate = round(completion_tokens / gen_time, 1)
+
+            if in_rate is not None:
+                st.last_input_tokens_per_sec = in_rate
+            if out_rate is not None:
+                st.last_output_tokens_per_sec = out_rate
+                st.last_tokens_per_sec = out_rate
+
+            # Update per-model metrics
+            if model_name:
+                target_key = model_name
+                for k in st.model_metrics.keys():
+                    if k == model_name or k.startswith(model_name) or model_name.startswith(k):
+                        target_key = k
+                        break
+                if target_key not in st.model_metrics:
+                    st.model_metrics[target_key] = ModelTokenMetrics(model_name=target_key)
+
+                mm = st.model_metrics[target_key]
+                mm.total_requests += 1
+                if prompt_tokens:
+                    mm.total_prompt_tokens += prompt_tokens
+                    mm.last_prompt_tokens = prompt_tokens
+                if completion_tokens:
+                    mm.total_completion_tokens += completion_tokens
+                    mm.last_completion_tokens = completion_tokens
+                if duration_sec:
+                    mm.last_duration_sec = duration_sec
+                if ttft_sec:
+                    mm.last_ttft_sec = ttft_sec
+                if in_rate:
+                    mm.last_input_tok_per_sec = in_rate
+                    if mm.avg_input_tok_per_sec is None:
+                        mm.avg_input_tok_per_sec = in_rate
+                    else:
+                        mm.avg_input_tok_per_sec = round((mm.avg_input_tok_per_sec * 0.7) + (in_rate * 0.3), 1)
+                if out_rate:
+                    mm.last_output_tok_per_sec = out_rate
+                    if mm.avg_output_tok_per_sec is None:
+                        mm.avg_output_tok_per_sec = out_rate
+                    else:
+                        mm.avg_output_tok_per_sec = round((mm.avg_output_tok_per_sec * 0.7) + (out_rate * 0.3), 1)
 
     def get_summary(self) -> MeshHealthSummary:
         node_list = list(self.statuses.values())

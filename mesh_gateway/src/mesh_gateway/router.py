@@ -147,12 +147,38 @@ class MeshRouter:
         forward_body["model"] = resolved_model
 
         # Build target URL (Ollama supports /v1/chat/completions and /v1/completions natively)
-        target_url = f"{node.base_url.rstrip('/')}{path}"
+    @staticmethod
+    def _estimate_prompt_tokens(body: Dict[str, Any]) -> int:
+        """Estimate prompt tokens from request messages or prompt text."""
+        text = ""
+        if "prompt" in body:
+            p = body["prompt"]
+            text = p if isinstance(p, str) else " ".join(str(x) for x in p)
+        elif "messages" in body:
+            for m in body.get("messages", []):
+                c = m.get("content", "")
+                text += c if isinstance(c, str) else str(c)
+        return max(1, len(text) // 4)
 
+    async def forward_request(
+        self,
+        path: str,
+        body: Dict[str, Any],
+        headers: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        """Forward a non-streaming completion request to the optimal node."""
+        requested_model = body.get("model", "")
+        role = self.classify_role(path, requested_model, body)
+        node, resolved_model = self.select_node(role, requested_model)
+
+        forward_body = dict(body)
+        forward_body["model"] = resolved_model
+        target_url = f"{node.base_url.rstrip('/')}{path}"
         req_headers = {"Content-Type": "application/json"}
         if node.api_key:
             req_headers["Authorization"] = f"Bearer {node.api_key}"
 
+        estimated_p_tokens = self._estimate_prompt_tokens(forward_body)
         start_time = time.perf_counter()
         self.health.record_request_start(node.name)
         try:
@@ -162,9 +188,14 @@ class MeshRouter:
                 headers=req_headers,
                 timeout=httpx.Timeout(node.timeout_seconds),
             )
-            duration = round(time.perf_counter() - start_time, 2)
+            duration = round(time.perf_counter() - start_time, 3)
             if resp.status_code >= 400:
-                self.health.record_request_end(node.name, success=False, duration_sec=duration)
+                self.health.record_request_end(
+                    node.name,
+                    success=False,
+                    model_name=resolved_model,
+                    duration_sec=duration,
+                )
                 raise HTTPException(
                     status_code=resp.status_code,
                     detail=f"Node '{node.name}' returned error: {resp.text}",
@@ -172,22 +203,50 @@ class MeshRouter:
 
             data = resp.json()
             usage = data.get("usage", {}) if isinstance(data, dict) else {}
-            p_tokens = usage.get("prompt_tokens")
+            p_tokens = usage.get("prompt_tokens") or estimated_p_tokens
             c_tokens = usage.get("completion_tokens") or usage.get("total_tokens", 0)
-            tps = round(c_tokens / duration, 2) if (duration > 0 and c_tokens) else None
+
+            if not c_tokens and isinstance(data, dict):
+                for choice in data.get("choices", []):
+                    c_text = choice.get("message", {}).get("content", "") or choice.get("text", "")
+                    if c_text:
+                        c_tokens += max(1, len(c_text) // 4)
+
+            in_tps = None
+            out_tps = None
+            if isinstance(data, dict):
+                if data.get("prompt_eval_duration") and data["prompt_eval_duration"] > 0:
+                    p_eval_s = data["prompt_eval_duration"] / 1e9
+                    in_tps = round(p_tokens / p_eval_s, 1)
+                if data.get("eval_duration") and data["eval_duration"] > 0:
+                    eval_s = data["eval_duration"] / 1e9
+                    out_tps = round(c_tokens / eval_s, 1)
+
+            if out_tps is None and duration > 0 and c_tokens > 0:
+                out_tps = round(c_tokens / duration, 1)
+            if in_tps is None and duration > 0 and p_tokens > 0:
+                in_tps = round(p_tokens / (duration * 0.3), 1)
 
             self.health.record_request_end(
                 node.name,
                 success=True,
+                model_name=resolved_model,
+                tokens=c_tokens,
                 prompt_tokens=p_tokens,
                 completion_tokens=c_tokens,
                 duration_sec=duration,
-                tokens_per_sec=tps,
+                input_tokens_per_sec=in_tps,
+                output_tokens_per_sec=out_tps,
             )
             return data
         except httpx.RequestError as e:
-            duration = round(time.perf_counter() - start_time, 2)
-            self.health.record_request_end(node.name, success=False, duration_sec=duration)
+            duration = round(time.perf_counter() - start_time, 3)
+            self.health.record_request_end(
+                node.name,
+                success=False,
+                model_name=resolved_model,
+                duration_sec=duration,
+            )
             raise HTTPException(
                 status_code=502,
                 detail=f"Failed to communicate with node '{node.name}' at {node.base_url}: {e}",
@@ -211,9 +270,13 @@ class MeshRouter:
         if node.api_key:
             req_headers["Authorization"] = f"Bearer {node.api_key}"
 
+        estimated_p_tokens = self._estimate_prompt_tokens(forward_body)
         start_time = time.perf_counter()
+        first_token_time = None
         self.health.record_request_start(node.name)
         token_count = 0
+        parsed_p_tokens = None
+        parsed_c_tokens = None
         success = False
 
         # 1. Try gRPC streaming if node is connected via gRPC
@@ -227,6 +290,8 @@ class MeshRouter:
                         timeout_seconds=int(node.timeout_seconds),
                     ):
                         if chunk:
+                            if first_token_time is None:
+                                first_token_time = time.perf_counter()
                             token_count += 1
                             yield chunk
                     success = True
@@ -249,27 +314,58 @@ class MeshRouter:
 
             if resp.status_code >= 400:
                 error_bytes = await resp.aread()
-                duration = round(time.perf_counter() - start_time, 2)
-                self.health.record_request_end(node.name, success=False, duration_sec=duration)
+                duration = round(time.perf_counter() - start_time, 3)
+                self.health.record_request_end(
+                    node.name,
+                    success=False,
+                    model_name=resolved_model,
+                    duration_sec=duration,
+                )
                 yield f"data: {json.dumps({'error': error_bytes.decode('utf-8', errors='replace')})}\n\n"
                 return
 
             async for chunk in resp.aiter_text():
                 if chunk:
+                    if first_token_time is None:
+                        first_token_time = time.perf_counter()
                     token_count += 1
+
+                    # Extract usage metadata if present in stream
+                    if "data: " in chunk:
+                        for line in chunk.splitlines():
+                            if line.startswith("data: ") and line.strip() != "data: [DONE]":
+                                try:
+                                    parsed = json.loads(line[6:])
+                                    if "usage" in parsed and parsed["usage"]:
+                                        parsed_p_tokens = parsed["usage"].get("prompt_tokens")
+                                        parsed_c_tokens = parsed["usage"].get("completion_tokens")
+                                except Exception:
+                                    pass
                     yield chunk
 
             success = True
         except Exception as e:
             yield f"data: {json.dumps({'error': f'Streaming error from node {node.name}: {e}'})}\n\n"
         finally:
-            duration = round(time.perf_counter() - start_time, 2)
-            tps = round(token_count / duration, 2) if (duration > 0 and token_count > 0) else None
+            duration = round(time.perf_counter() - start_time, 3)
+            ttft = round(first_token_time - start_time, 3) if first_token_time else round(duration * 0.3, 3)
+            gen_time = max(0.001, duration - ttft)
+
+            final_p_tokens = parsed_p_tokens or estimated_p_tokens
+            final_c_tokens = parsed_c_tokens or token_count
+
+            in_tps = round(final_p_tokens / ttft, 1) if (ttft > 0 and final_p_tokens > 0) else None
+            out_tps = round(final_c_tokens / gen_time, 1) if (gen_time > 0 and final_c_tokens > 0) else None
+
             self.health.record_request_end(
                 node.name,
                 success=success,
-                tokens=token_count,
-                completion_tokens=token_count,
+                model_name=resolved_model,
+                tokens=final_c_tokens,
+                prompt_tokens=final_p_tokens,
+                completion_tokens=final_c_tokens,
                 duration_sec=duration,
-                tokens_per_sec=tps,
+                ttft_sec=ttft,
+                input_tokens_per_sec=in_tps,
+                output_tokens_per_sec=out_tps,
             )
