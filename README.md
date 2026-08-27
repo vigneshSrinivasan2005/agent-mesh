@@ -170,9 +170,37 @@ On your **Main Machine**, start the master gateway:
 agent-mesh run --config mesh-config.yaml
 ```
 
-*Or run the Master Gateway inside Docker:*
+---
+
+## Running with Docker & Container Orchestration
+
+You can run both the gateway and worker nodes entirely in Docker:
+
+### A. Run the Gateway in Docker
 ```bash
-docker compose -f docker/docker-compose.gateway.yml up -d
+docker compose -f docker/docker-compose.gateway.yml up -d --build
+```
+*Exposes the Gateway & Web Dashboard on `http://localhost:8000` with your local `mesh-config.yaml` mounted.*
+
+### B. Run Worker Nodes in Docker
+
+**NVIDIA GPU Worker (Linux / WSL / Homelab):**
+```bash
+docker compose -f docker/docker-compose.node-gpu.yml up -d
+```
+
+**CPU Worker:**
+```bash
+docker compose -f docker/docker-compose.node-cpu.yml up -d
+```
+
+### C. Spin Up On-Demand Workers via CLI
+```bash
+# Launch a dedicated autocomplete container on port 11435:
+agent-mesh node-up --role autocomplete --model qwen2.5-coder:1.5b-base --port 11435
+
+# Stop and remove worker container:
+agent-mesh node-down agent-mesh-worker-autocomplete-11435
 ```
 
 ---
