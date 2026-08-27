@@ -136,6 +136,7 @@ class NodeHealthStatus(BaseModel):
     last_check: Optional[str] = None
     loaded_models: List[str] = Field(default_factory=list)
     available_models: List[str] = Field(default_factory=list)
+    configured_models: List[str] = Field(default_factory=list)
     pinned_model: Optional[str] = None
     pinned_model_warm: bool = False
     total_requests: int = 0

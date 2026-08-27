@@ -41,6 +41,15 @@ class HealthTracker:
         is_cont = node.container.enabled if node.container else False
         cont_id = node.container.container_id if node.container else None
         is_scaled = node.container.is_auto_scaled if node.container else False
+
+        # Collect distinct configured models for this node
+        cfg_models: List[str] = []
+        if node.pinned_model and node.pinned_model not in cfg_models:
+            cfg_models.append(node.pinned_model)
+        for target_model in node.model_aliases.values():
+            if target_model not in cfg_models:
+                cfg_models.append(target_model)
+
         self.statuses[node.name] = NodeHealthStatus(
             name=node.name,
             base_url=node.base_url,
@@ -49,6 +58,7 @@ class HealthTracker:
             priority=node.priority,
             state=NodeState.INITIALIZING,
             pinned_model=node.pinned_model,
+            configured_models=cfg_models,
             is_container=is_cont,
             container_id=cont_id,
             container_engine="docker" if is_cont else "native",
@@ -152,17 +162,22 @@ class HealthTracker:
                         sorted_latencies[min(p95_idx, len(sorted_latencies) - 1)], 2
                     )
 
-                # Extract available installed models if /api/tags responded
-                available_models: List[str] = []
+                # Extract available installed models that match configured models
+                raw_models: List[str] = []
                 try:
                     data = resp.json()
                     for m in data.get("models", []):
                         m_name = m.get("name") or m.get("model")
                         if m_name:
-                            available_models.append(m_name)
+                            raw_models.append(m_name)
                 except Exception:
                     pass
-                status.available_models = available_models
+
+                configured_set = set(status.configured_models)
+                status.available_models = [
+                    m for m in raw_models
+                    if any(cfg in m or m in cfg for cfg in configured_set)
+                ]
 
                 # Check VRAM active loaded models if Ollama
                 loaded_models: List[str] = []

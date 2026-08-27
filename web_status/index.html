@@ -416,16 +416,20 @@
         const latencyText = node.state === 'OFFLINE' ? 'OFFLINE' : `${node.latency_ms} ms`;
 
         // Active Model & VRAM / RAM Split
-        const activeName = node.active_model_name || (node.loaded_models && node.loaded_models[0]) || node.pinned_model || 'Idle / None Loaded';
-        const isWarm = !!(node.active_model_name || node.pinned_model_warm || (node.loaded_models && node.loaded_models.length > 0));
+        const isWarm = !!(node.active_model_name || (node.loaded_models && node.loaded_models.length > 0));
+        const activeName = isWarm
+          ? (node.active_model_name || node.loaded_models[0])
+          : (node.pinned_model ? `Standby (${node.pinned_model})` : 'Standby / Idle');
         
         let metaBadgesHtml = '';
-        if (node.active_model_parameter_size) metaBadgesHtml += `<span class="model-meta-badge">${node.active_model_parameter_size}</span>`;
-        if (node.active_model_quantization) metaBadgesHtml += `<span class="model-meta-badge">${node.active_model_quantization}</span>`;
-        if (node.active_model_context_length) metaBadgesHtml += `<span class="model-meta-badge">Ctx: ${node.active_model_context_length}</span>`;
+        if (isWarm) {
+          if (node.active_model_parameter_size) metaBadgesHtml += `<span class="model-meta-badge">${node.active_model_parameter_size}</span>`;
+          if (node.active_model_quantization) metaBadgesHtml += `<span class="model-meta-badge">${node.active_model_quantization}</span>`;
+          if (node.active_model_context_length) metaBadgesHtml += `<span class="model-meta-badge">Ctx: ${node.active_model_context_length}</span>`;
+        }
 
         let offloadBarHtml = '';
-        let swapAlertHtml = '<div class="swap-alert idle">○ No Model Active in Memory</div>';
+        let swapAlertHtml = '<div class="swap-alert idle">○ Standby — Loads into memory dynamically</div>';
 
         if (isWarm && node.active_model_size_mb) {
           const gpuPct = node.active_model_gpu_pct ?? 100;
@@ -477,16 +481,34 @@
           `;
         }
 
-        // Installed Models Inventory
+        // Configured / Running Models
         let inventoryHtml = '';
-        if (node.available_models && node.available_models.length > 0) {
-          const badges = node.available_models.map(m => {
-            const isActive = (node.active_model_name && m.includes(node.active_model_name)) || (node.loaded_models && node.loaded_models.some(lm => lm.includes(m)));
-            return `<span class="inventory-badge ${isActive ? 'active-model' : ''}">${isActive ? '● ' : ''}${m}</span>`;
+        const configuredList = (node.configured_models && node.configured_models.length > 0)
+          ? node.configured_models
+          : (node.pinned_model ? [node.pinned_model] : []);
+
+        if (configuredList.length > 0) {
+          const badges = configuredList.map(m => {
+            const isLoaded = (node.active_model_name && (node.active_model_name === m || node.active_model_name.includes(m) || m.includes(node.active_model_name))) ||
+                             (node.loaded_models && node.loaded_models.some(lm => lm === m || lm.includes(m) || m.includes(lm)));
+            const isInstalled = (node.available_models || []).some(am => am === m || am.includes(m) || m.includes(am));
+            
+            let badgeClass = 'inventory-badge';
+            let label = m;
+            if (isLoaded) {
+              badgeClass += ' active-model';
+              label = `● ${m} (In VRAM)`;
+            } else if (isInstalled) {
+              label = `○ ${m} (Ready)`;
+            } else {
+              label = `⚠️ ${m} (Not Found)`;
+            }
+            return `<span class="${badgeClass}">${label}</span>`;
           }).join('');
+
           inventoryHtml = `
             <div class="inventory-section">
-              <div class="inventory-title">Installed Node Models</div>
+              <div class="inventory-title">Configured Node Models</div>
               <div class="inventory-list">${badges}</div>
             </div>
           `;
