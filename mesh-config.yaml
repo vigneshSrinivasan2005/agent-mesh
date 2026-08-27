@@ -18,11 +18,12 @@ nodes:
       - edit
       - reasoning
     priority: 1
-    pinned_model: deepseek-r1:8b
+    pinned_model: qwen2.5-coder:7b
     model_aliases:
-      reasoning-chat: deepseek-r1:8b
+      reasoning-chat: qwen2.5-coder:7b
+      qwen-7b: qwen2.5-coder:7b
+      qwen2.5-coder:7b: qwen2.5-coder:7b
       deepseek-r1: deepseek-r1:8b
       deepseek-r1:8b: deepseek-r1:8b
-      deepseek-8b: deepseek-r1:8b
-      fast-reasoning: deepseek-r1:8b
-      mesh-reasoning: deepseek-r1:8b
+      mesh-reasoning: qwen2.5-coder:7b
+      fast-edit: qwen2.5-coder:7b
